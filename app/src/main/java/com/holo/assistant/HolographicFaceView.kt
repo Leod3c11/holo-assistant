@@ -15,6 +15,7 @@ class HolographicFaceView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     private val colorHoloCyan = Color.parseColor("#00F0FF")
+    private val colorHoloGreen = Color.parseColor("#00FF88")
     private val colorHoloDim = Color.parseColor("#152A38")
     private val colorBg = Color.parseColor("#030712")
 
@@ -31,7 +32,7 @@ class HolographicFaceView @JvmOverloads constructor(
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = colorHoloCyan
-        textSize = 30f
+        textSize = 28f
         typeface = Typeface.MONOSPACE
     }
 
@@ -51,7 +52,10 @@ class HolographicFaceView @JvmOverloads constructor(
     private var currentLookX = 0f
     private var currentLookY = 0f
 
-    var emotion: Int = 0 // 0 = Neutro, 1 = Feliz, 2 = Surpreso
+    // Estado da Visão Facial do Usuário
+    var isFaceLocked: Boolean = false
+    var userSmilePct: Int = 0
+    var emotion: Int = 0 // 0 = Neutro, 1 = Feliz / Sorrindo
     var isSpeaking: Boolean = true
 
     init {
@@ -63,17 +67,45 @@ class HolographicFaceView @JvmOverloads constructor(
         }
     }
 
+    fun updateFaceTracking(smileProb: Float, headEulerY: Float, headEulerX: Float) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val cx = w / 2f
+        val cy = h / 2f - 60f
+
+        isFaceLocked = true
+        userSmilePct = (smileProb * 100).toInt().coerceIn(0, 100)
+
+        // Se o usuário sorrir > 45%, o holograma sorri e arquêia as sobrancelhas
+        emotion = if (smileProb > 0.45f) 1 else 0
+
+        // Os olhos do holograma travam e seguem a rotação da cabeça do usuário
+        // Espelhamos a rotação horizontal para ficar natural
+        targetLookX = cx - (headEulerY * 18f)
+        targetLookY = cy - (headEulerX * 12f)
+    }
+
+    fun resetTracking() {
+        isFaceLocked = false
+        userSmilePct = 0
+        emotion = 0
+        targetLookX = width / 2f
+        targetLookY = height / 2f - 60f
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                targetLookX = event.x
-                targetLookY = event.y
-                return true
-            }
-            MotionEvent.ACTION_UP -> {
-                targetLookX = width / 2f
-                targetLookY = height / 2f
-                return true
+        if (!isFaceLocked) {
+            when (event.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    targetLookX = event.x
+                    targetLookY = event.y
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    targetLookX = width / 2f
+                    targetLookY = height / 2f - 60f
+                    return true
+                }
             }
         }
         return super.onTouchEvent(event)
@@ -89,10 +121,9 @@ class HolographicFaceView @JvmOverloads constructor(
         val centerY = h / 2f - 60f
         val time = SystemClock.uptimeMillis()
 
-        // 1. Fundo Espacial Cibernético
         canvas.drawColor(colorBg)
 
-        // 2. Scanlines Holográficas Verticais
+        // Scanlines
         scanlineOffset = (scanlineOffset + 2.5f) % 24f
         var y = scanlineOffset
         while (y < h) {
@@ -100,7 +131,7 @@ class HolographicFaceView @JvmOverloads constructor(
             y += 24f
         }
 
-        // Feixe horizontal de varredura
+        // Feixe de varredura
         val sweepY = ((time / 8) % (h.toLong() + 300)) - 150f
         val sweepPaint = Paint().apply {
             shader = LinearGradient(
@@ -111,39 +142,33 @@ class HolographicFaceView @JvmOverloads constructor(
         }
         canvas.drawRect(0f, sweepY - 40f, w, sweepY + 40f, sweepPaint)
 
-        // 3. Anéis de HUD rotativos
+        // Anéis HUD
         hudRotation = (hudRotation + 0.35f) % 360f
         drawHudRings(canvas, centerX, centerY)
 
-        // 4. Lógica de Piscar
+        // Piscar
         updateBlink(time)
 
-        // Interpolação suave do olhar (smooth tracking)
-        currentLookX += (targetLookX - currentLookX) * 0.12f
-        currentLookY += (targetLookY - currentLookY) * 0.12f
+        // Interpolação suave do olhar
+        currentLookX += (targetLookX - currentLookX) * 0.15f
+        currentLookY += (targetLookY - currentLookY) * 0.15f
         val lookOffsetX = ((currentLookX - centerX) / (w / 2f)).coerceIn(-1f, 1f) * 26f
         val lookOffsetY = ((currentLookY - centerY) / (h / 2f)).coerceIn(-1f, 1f) * 20f
 
-        // 5. Estrutura da Face Holográfica
+        // Desenhar Face
         drawFaceWireframe(canvas, centerX, centerY, time)
-
-        // 6. Sobrancelhas
         drawEyebrows(canvas, centerX, centerY)
-
-        // 7. Olhos com rastreamento
         drawEyes(canvas, centerX, centerY, lookOffsetX, lookOffsetY)
+        drawMouth(canvas, centerX, centerY + 170f, time)
 
-        // 8. Boca / Visualizador de áudio
-        drawMouthWaveform(canvas, centerX, centerY + 170f, time)
-
-        // 9. Textos do HUD
-        drawHudStatus(canvas, w, h)
+        // Telemetria
+        drawTelemetry(canvas, w, h)
 
         postInvalidateOnAnimation()
     }
 
     private fun updateBlink(time: Long) {
-        if (!isBlinking && time - lastBlinkTime > 3200) {
+        if (!isBlinking && time - lastBlinkTime > 3400) {
             isBlinking = true
             lastBlinkTime = time
         }
@@ -170,7 +195,7 @@ class HolographicFaceView @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, radiusOuter, glowPaint)
         canvas.drawCircle(cx, cy, radiusInner, glowPaint)
 
-        glowPaint.color = colorHoloCyan
+        glowPaint.color = if (isFaceLocked) colorHoloGreen else colorHoloCyan
         glowPaint.strokeWidth = 3f
 
         canvas.save()
@@ -209,9 +234,9 @@ class HolographicFaceView @JvmOverloads constructor(
     }
 
     private fun drawEyebrows(canvas: Canvas, cx: Float, cy: Float) {
-        glowPaint.color = colorHoloCyan
+        glowPaint.color = if (emotion == 1) colorHoloGreen else colorHoloCyan
         glowPaint.strokeWidth = 4f
-        val arch = if (emotion == 1) -14f else 0f
+        val arch = if (emotion == 1) -16f else 0f
         canvas.drawLine(cx - 130f, cy - 90f + arch, cx - 40f, cy - 100f + arch, glowPaint)
         canvas.drawLine(cx + 40f, cy - 100f + arch, cx + 130f, cy - 90f + arch, glowPaint)
     }
@@ -224,13 +249,13 @@ class HolographicFaceView @JvmOverloads constructor(
 
         for (sign in listOf(-1f, 1f)) {
             val eyeX = cx + (sign * eyeSpacing)
-            glowPaint.color = colorHoloCyan
+            glowPaint.color = if (isFaceLocked) colorHoloGreen else colorHoloCyan
             glowPaint.strokeWidth = 3f
             val eyeRect = RectF(eyeX - eyeRadiusX, eyeY - eyeRadiusY, eyeX + eyeRadiusX, eyeY + eyeRadiusY)
             canvas.drawOval(eyeRect, glowPaint)
 
             if (blinkFactor > 0.25f) {
-                fillPaint.color = colorHoloCyan
+                fillPaint.color = if (isFaceLocked) colorHoloGreen else colorHoloCyan
                 val irisX = eyeX + lookX * 0.7f
                 val irisY = eyeY + lookY * 0.5f * blinkFactor
                 canvas.drawCircle(irisX, irisY, 13f * blinkFactor, fillPaint)
@@ -241,40 +266,56 @@ class HolographicFaceView @JvmOverloads constructor(
         }
     }
 
-    private fun drawMouthWaveform(canvas: Canvas, cx: Float, cy: Float, time: Long) {
-        glowPaint.color = colorHoloCyan
+    private fun drawMouth(canvas: Canvas, cx: Float, cy: Float, time: Long) {
+        glowPaint.color = if (emotion == 1) colorHoloGreen else colorHoloCyan
         glowPaint.strokeWidth = 3f
 
-        val barCount = 15
-        val barWidth = 14f
-        val totalWidth = barCount * barWidth
-        val startX = cx - (totalWidth / 2f)
-
-        for (i in 0 until barCount) {
-            val x = startX + (i * barWidth)
-            val freq = if (isSpeaking) {
-                sin((time / 110.0) + i * 0.7).toFloat().absoluteValue * 34f + 6f
-            } else {
-                sin((time / 400.0) + i * 0.3).toFloat().absoluteValue * 8f + 3f
+        if (emotion == 1) {
+            // Curvatura de sorriso holográfico
+            val smilePath = Path().apply {
+                moveTo(cx - 80f, cy - 5f)
+                quadTo(cx, cy + 35f, cx + 80f, cy - 5f)
             }
-            canvas.drawLine(x, cy - freq, x, cy + freq, glowPaint)
+            canvas.drawPath(smilePath, glowPaint)
+        } else {
+            // Equalizador de fala neutro
+            val barCount = 15
+            val barWidth = 14f
+            val totalWidth = barCount * barWidth
+            val startX = cx - (totalWidth / 2f)
+
+            for (i in 0 until barCount) {
+                val x = startX + (i * barWidth)
+                val freq = if (isSpeaking) {
+                    sin((time / 110.0) + i * 0.7).toFloat().absoluteValue * 30f + 5f
+                } else {
+                    sin((time / 400.0) + i * 0.3).toFloat().absoluteValue * 8f + 3f
+                }
+                canvas.drawLine(x, cy - freq, x, cy + freq, glowPaint)
+            }
         }
     }
 
-    private fun drawHudStatus(canvas: Canvas, w: Float, h: Float) {
+    private fun drawTelemetry(canvas: Canvas, w: Float, h: Float) {
         textPaint.color = colorHoloCyan
-        textPaint.textSize = 28f
+        textPaint.textSize = 26f
 
         canvas.drawText("SYS: ONLINE", 40f, 95f, textPaint)
-        canvas.drawText("HOLO CORE v1.0", 40f, 135f, textPaint)
 
-        val statusText = "SYNC: ACTIVE"
-        val statusWidth = textPaint.measureText(statusText)
-        canvas.drawText(statusText, w - statusWidth - 40f, 95f, textPaint)
+        if (isFaceLocked) {
+            textPaint.color = colorHoloGreen
+            canvas.drawText("VISION: LOCK [USER ACQUIRED]", 40f, 135f, textPaint)
+            canvas.drawText("SMILE RATIO: $userSmilePct%", 40f, 175f, textPaint)
+            val mood = if (emotion == 1) "STATUS: HAPPY / ENGAGED" else "STATUS: ATTENTIVE"
+            canvas.drawText(mood, 40f, 215f, textPaint)
+        } else {
+            textPaint.color = Color.argb(160, 0, 240, 255)
+            canvas.drawText("VISION: SEARCHING USER...", 40f, 135f, textPaint)
+        }
 
-        val footerText = "TOQUE NA TELA PARA DIRECIONAR O OLHAR"
+        // Rodapé
+        val footerText = if (isFaceLocked) "RASTREAMENTO OCULAR ATIVO" else "OLHE PARA A CAMERA FRONTAL"
         textPaint.textSize = 22f
-        textPaint.color = Color.argb(160, 0, 240, 255)
         val footerWidth = textPaint.measureText(footerText)
         canvas.drawText(footerText, (w - footerWidth) / 2f, h - 80f, textPaint)
     }
