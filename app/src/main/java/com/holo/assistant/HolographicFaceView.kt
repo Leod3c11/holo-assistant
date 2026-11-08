@@ -15,22 +15,18 @@ class HolographicFaceView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     private val colorBgCenter = Color.parseColor("#233742")
-    private val colorBgEdge = Color.parseColor("#0E171D")
+    private val colorBgEdge = Color.parseColor("#0D151B")
 
-    private val blockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-
+    private val blockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.1f
         color = Color.parseColor("#142028")
     }
-
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.MONOSPACE
         color = Color.parseColor("#B0BEC5")
-        textSize = 26f
+        textSize = 25f
     }
 
     private val faceMap = arrayOf(
@@ -123,37 +119,35 @@ class HolographicFaceView @JvmOverloads constructor(
     private val voxels = ArrayList<Voxel>(4800)
     private val random = Random(77)
 
-    // Parâmetros biomecânicos contínuos (0..1) com interpolação fluida
+    // Parâmetros biomecânicos contínuos
     private var smileAmount = 0f
     private var targetSmile = 0f
-
     private var leftEyeOpen = 1f
     private var targetLeftEye = 1f
-
     private var rightEyeOpen = 1f
     private var targetRightEye = 1f
-
-    private var surpriseAmount = 0f
-    private var targetSurprise = 0f
-
+    private var mouthOpenRatio = 0f
+    private var targetMouthOpen = 0f
+    private var browAsymmetry = 0f // Sobrancelha arqueada cética
+    private var targetAsymmetry = 0f
     private var browFurrow = 0f
     private var targetFurrow = 0f
 
     var headYaw = 0f
     private var targetYaw = 0f
-
     var headPitch = 0f
     private var targetPitch = 0f
-
     var headRoll = 0f
     private var targetRoll = 0f
 
     var isSpeaking: Boolean = false
-    var emotion: Int = 0 // 0=Neutro, 1=Feliz, 2=Pensando, 3=Piscando, 4=Surpreso, 5=Curioso
+    var isListening: Boolean = false
+    var micVoiceLevel: Float = 0f // Reage ao volume da sua voz enquanto você fala!
+    var emotion: Int = 0
     var isFaceLocked: Boolean = false
     var userSmilePct: Int = 0
-    var currentExpressionLabel: String = "NEUTRO / FLUXO QUÂNTICO"
-    var lastSpokenText: String = "TOQUE NA TELA PARA FALAR COMIGO"
+    var currentExpressionLabel: String = "CONECTADO / FLUXO QUÂNTICO"
+    var lastSpokenText: String = "TOQUE NA FACE PARA FALAR"
 
     init {
         buildFluidCloud()
@@ -164,7 +158,6 @@ class HolographicFaceView @JvmOverloads constructor(
         val rows = faceMap.size
         val cols = faceMap[0].length
 
-        // 1. Voxels Estruturais com Física Elástica
         for (r in 0 until rows) {
             val ny = (r.toFloat() / (rows - 1)) * 2f - 1f
             val rowStr = faceMap[r]
@@ -186,13 +179,12 @@ class HolographicFaceView @JvmOverloads constructor(
                 val subSize = if (random.nextFloat() < 0.3f) 0.75f else 0.95f
                 val innerDot = lum > 0.45f && random.nextFloat() < 0.55f
                 val phase = random.nextFloat() * 6.28f
-                val spd = 0.08f + (1f - distElliptical.coerceIn(0f, 1f)) * 0.14f
+                val spd = 0.09f + (1f - distElliptical.coerceIn(0f, 1f)) * 0.15f
 
                 voxels.add(Voxel(nx, ny, nz, nx, ny, nz, 0f, 0f, 0f, lum, false, phase, spd, subSize, innerDot))
             }
         }
 
-        // 2. Partículas de Fluido Vórtice ao Redor (1.400 partículas)
         for (i in 0 until 1400) {
             val angle = random.nextFloat() * 2f * PI.toFloat()
             val spread = 0.70f + random.nextFloat().pow(1.35f) * 1.18f
@@ -204,7 +196,7 @@ class HolographicFaceView @JvmOverloads constructor(
             val lum = (1.15f - dist * 0.45f + random.nextFloat() * 0.35f).coerceIn(0.25f, 1f)
             val sz = 0.35f + random.nextFloat() * 0.85f
             val phase = random.nextFloat() * 6.28f
-            val spd = 0.4f + random.nextFloat() * 0.8f
+            val spd = 0.45f + random.nextFloat() * 0.85f
 
             voxels.add(Voxel(nx, ny, nz, nx, ny, nz, 0f, 0f, 0f, lum, true, phase, spd, sz, false))
         }
@@ -214,6 +206,7 @@ class HolographicFaceView @JvmOverloads constructor(
         smileProb: Float,
         leftOpenProb: Float,
         rightOpenProb: Float,
+        mouthOpen: Float,
         yaw: Float,
         pitch: Float,
         roll: Float
@@ -224,43 +217,60 @@ class HolographicFaceView @JvmOverloads constructor(
         targetSmile = smileProb.coerceIn(0f, 1f)
         targetLeftEye = leftOpenProb.coerceIn(0f, 1f)
         targetRightEye = rightOpenProb.coerceIn(0f, 1f)
+        targetMouthOpen = mouthOpen.coerceIn(0f, 1f)
 
         targetYaw = -yaw * (PI.toFloat() / 180f) * 0.85f
         targetPitch = pitch * (PI.toFloat() / 180f) * 0.65f
         targetRoll = -roll * (PI.toFloat() / 180f) * 0.65f
 
-        // Detectar Surpresa (olhos muito abertos + cabeça erguida ou sorriso rápido)
-        targetSurprise = if (leftOpenProb > 0.88f && rightOpenProb > 0.88f && pitch > 8f) 0.85f else 0f
+        targetAsymmetry = (leftOpenProb - rightOpenProb).coerceIn(-0.8f, 0.8f)
+        targetFurrow = if (smileProb < 0.12f && (leftOpenProb < 0.65f && rightOpenProb < 0.65f)) 0.75f else 0f
 
-        // Detectar Concentração / Foco (olhos semi-fechados e sem sorriso)
-        targetFurrow = if (smileProb < 0.15f && (leftOpenProb < 0.65f || rightOpenProb < 0.65f)) 0.7f else 0f
-
-        // Rótulo dinâmico da expressão reconhecida
-        if (emotion != 2) {
+        if (emotion != 2 && !isListening) {
             when {
-                leftOpenProb < 0.25f && rightOpenProb > 0.6f -> {
-                    emotion = 3
-                    currentExpressionLabel = "PISCADELA DETECTADA 😉"
-                }
-                rightOpenProb < 0.25f && leftOpenProb > 0.6f -> {
-                    emotion = 3
-                    currentExpressionLabel = "PISCADELA DETECTADA 😉"
-                }
-                smileProb > 0.55f -> {
+                smileProb > 0.78f && mouthOpen > 0.35f -> {
                     emotion = 1
-                    currentExpressionLabel = "SORRISO RADIANTE ($userSmilePct%)"
+                    currentExpressionLabel = "GARGALHADA / EUFORIA 😄"
                 }
-                targetSurprise > 0.5f -> {
+                leftOpenProb < 0.25f && rightOpenProb > 0.62f -> {
+                    emotion = 3
+                    currentExpressionLabel = "PISCADELA ESQUERDA 😉"
+                }
+                rightOpenProb < 0.25f && leftOpenProb > 0.62f -> {
+                    emotion = 3
+                    currentExpressionLabel = "PISCADELA DIREITA 😉"
+                }
+                leftOpenProb < 0.22f && rightOpenProb < 0.22f -> {
+                    emotion = 0
+                    currentExpressionLabel = "OLHOS FECHADOS / ZEN 😌"
+                }
+                mouthOpen > 0.52f && smileProb < 0.4f -> {
                     emotion = 4
-                    currentExpressionLabel = "SURPRESO / ALERTA"
+                    currentExpressionLabel = "SURPRESO / BOCA ABERTA 😮"
                 }
-                abs(roll) > 14f -> {
+                smileProb > 0.48f -> {
+                    emotion = 1
+                    currentExpressionLabel = "SORRISO FELIZ ($userSmilePct%) 😊"
+                }
+                smileProb in 0.24f..0.48f -> {
+                    emotion = 1
+                    currentExpressionLabel = "SORRISO DISCRETO 😏"
+                }
+                abs(leftOpenProb - rightOpenProb) > 0.28f -> {
                     emotion = 5
-                    currentExpressionLabel = "CURIOSO / INCLINAÇÃO 3D"
+                    currentExpressionLabel = "CÉTICO / SOBRANCELHA ARQUEADA 🤨"
+                }
+                abs(roll) > 13f -> {
+                    emotion = 5
+                    currentExpressionLabel = "CURIOSO / CABEÇA INCLINADA 🤔"
+                }
+                pitch < -12f -> {
+                    emotion = 0
+                    currentExpressionLabel = "PENSATIVO / OLHANDO ACIMA"
                 }
                 targetFurrow > 0.4f -> {
                     emotion = 0
-                    currentExpressionLabel = "CONCENTRADO / SÉRIO"
+                    currentExpressionLabel = "CONCENTRADO / SÉRIO 😐"
                 }
                 else -> {
                     emotion = 0
@@ -276,14 +286,15 @@ class HolographicFaceView @JvmOverloads constructor(
         targetSmile = 0f
         targetLeftEye = 1f
         targetRightEye = 1f
-        targetSurprise = 0f
+        targetMouthOpen = 0f
+        targetAsymmetry = 0f
         targetFurrow = 0f
         targetYaw = 0f
         targetPitch = 0f
         targetRoll = 0f
-        if (emotion != 2) {
+        if (emotion != 2 && !isListening) {
             emotion = 0
-            currentExpressionLabel = "AUTÔNOMO / RESPIRAÇÃO QUÂNTICA"
+            currentExpressionLabel = "AUTÔNOMO / FLUXO QUÂNTICO"
         }
     }
 
@@ -298,7 +309,6 @@ class HolographicFaceView @JvmOverloads constructor(
         val timeMs = SystemClock.uptimeMillis()
         val t = timeMs / 1000f
 
-        // 1. Fundo Gradiente Azul-Petróleo Profundo
         val bgGradient = RadialGradient(
             cx, cy, max(w, h) * 0.75f,
             colorBgCenter, colorBgEdge, Shader.TileMode.CLAMP
@@ -307,27 +317,25 @@ class HolographicFaceView @JvmOverloads constructor(
         canvas.drawRect(0f, 0f, w, h, blockPaint)
         blockPaint.shader = null
 
-        // 2. Movimento Autônomo Orgânico quando sem rosto travado
         if (!isFaceLocked) {
-            targetYaw = sin(t * 0.8f) * 0.12f
-            targetPitch = cos(t * 0.6f) * 0.08f
-            targetRoll = sin(t * 0.4f) * 0.04f
-            // Piscar autônomo suave a cada 4 segundos
-            val autoBlink = if ((timeMs % 4200) < 180) 0.1f else 1f
+            targetYaw = sin(t * 0.85f) * 0.14f
+            targetPitch = cos(t * 0.65f) * 0.09f
+            targetRoll = sin(t * 0.45f) * 0.05f
+            val autoBlink = if ((timeMs % 4000) < 170) 0.08f else 1f
             targetLeftEye = autoBlink
             targetRightEye = autoBlink
         }
 
-        // Interpolação fluida dos parâmetros faciais
-        smileAmount += (targetSmile - smileAmount) * 0.14f
-        leftEyeOpen += (targetLeftEye - leftEyeOpen) * 0.22f
-        rightEyeOpen += (targetRightEye - rightEyeOpen) * 0.22f
-        surpriseAmount += (targetSurprise - surpriseAmount) * 0.15f
-        browFurrow += (targetFurrow - browFurrow) * 0.12f
+        smileAmount += (targetSmile - smileAmount) * 0.16f
+        leftEyeOpen += (targetLeftEye - leftEyeOpen) * 0.25f
+        rightEyeOpen += (targetRightEye - rightEyeOpen) * 0.25f
+        mouthOpenRatio += (targetMouthOpen - mouthOpenRatio) * 0.22f
+        browAsymmetry += (targetAsymmetry - browAsymmetry) * 0.15f
+        browFurrow += (targetFurrow - browFurrow) * 0.14f
 
-        headYaw += (targetYaw - headYaw) * 0.12f
-        headPitch += (targetPitch - headPitch) * 0.12f
-        headRoll += (targetRoll - headRoll) * 0.12f
+        headYaw += (targetYaw - headYaw) * 0.14f
+        headPitch += (targetPitch - headPitch) * 0.14f
+        headRoll += (targetRoll - headRoll) * 0.14f
 
         val faceHalfW = w * 0.39f
         val faceHalfH = faceHalfW * 1.42f
@@ -340,73 +348,67 @@ class HolographicFaceView @JvmOverloads constructor(
         val cosZ = cos(headRoll)
         val sinZ = sin(headRoll)
 
-        val speechWave = if (isSpeaking) (sin(t * 14f) * 0.5f + 0.5f) else 0f
+        val speechWave = if (isSpeaking) (sin(t * 15f) * 0.5f + 0.5f) else 0f
+        val listenPulse = if (isListening) (micVoiceLevel * 0.06f) else 0f
 
-        // 3. Atualização Física e Renderização de cada Voxel Fluido
         for (v in voxels) {
             if (v.isDispersal) {
-                // Movimento Fluido de Vórtice / Campo de Força
-                val angle = atan2(v.curY, v.curX) + (0.004f * v.speed)
+                val angle = atan2(v.curY, v.curX) + (0.005f * v.speed)
                 val rad = sqrt(v.curX * v.curX + v.curY * v.curY)
-                val waveR = sin(t * 2.2f + v.phase) * 0.003f
-                val speechPush = if (isSpeaking) sin(rad * 6f - t * 10f) * 0.008f else 0f
+                val waveR = sin(t * 2.5f + v.phase) * 0.004f
+                val voiceForce = if (isSpeaking) sin(rad * 6f - t * 12f) * 0.01f else listenPulse
 
-                v.curX = cos(angle) * (rad + waveR + speechPush)
-                v.curY = sin(angle) * (rad + waveR + speechPush)
-                v.curZ = v.baseZ + cos(t * 1.8f + v.phase) * 0.08f
+                v.curX = cos(angle) * (rad + waveR + voiceForce)
+                v.curY = sin(angle) * (rad + waveR + voiceForce)
+                v.curZ = v.baseZ + cos(t * 2.0f + v.phase) * 0.09f
             } else {
-                // Cálculo do Alvo Biomecânico para cada região do rosto
                 var tx = v.baseX
                 var ty = v.baseY
                 var tz = v.baseZ
 
-                // A. Ondulação Quântica Contínua (faz os pixels parecerem vivos/líquidos)
-                val ripple = sin(v.baseY * 4.5f - t * 2.8f + v.phase * 0.3f) * 0.012f
-                tx += cos(v.baseY * 3f + t * 2f) * 0.008f
+                // Ondulação fluida contínua + vibração ao ouvir sua voz
+                val ripple = sin(v.baseY * 5f - t * 3.2f + v.phase * 0.4f) * (0.014f + listenPulse)
+                tx += cos(v.baseY * 3.5f + t * 2.2f) * 0.009f
                 tz += ripple
 
-                // B. Olhos e Sobrancelhas (Esquerdo: x < 0, Direito: x > 0)
+                // Olhos
                 if (ty in -0.35f..-0.02f && abs(tx) in 0.14f..0.62f) {
                     val eyeOpen = if (tx < 0) leftEyeOpen else rightEyeOpen
-                    // Quando o olho fecha/pisca, as pálpebras convergem para o centro do olho (-0.18f)
                     val eyeCenterY = -0.18f
-                    ty = eyeCenterY + (ty - eyeCenterY) * (0.25f + 0.75f * eyeOpen + surpriseAmount * 0.3f)
-                    tz -= (1f - eyeOpen) * 0.08f
+                    ty = eyeCenterY + (ty - eyeCenterY) * (0.20f + 0.80f * eyeOpen)
+                    tz -= (1f - eyeOpen) * 0.09f
                 }
 
-                // Sobrancelhas (arqueiam na surpresa/sorriso, contraem no foco)
+                // Sobrancelhas (Sorriso, Surpresa, Assimetria Cética e Franzir)
                 if (ty in -0.48f..-0.28f && abs(tx) in 0.12f..0.68f) {
-                    ty -= (smileAmount * 0.04f + surpriseAmount * 0.07f)
-                    ty += browFurrow * 0.045f
-                    if (browFurrow > 0.1f) {
-                        tx *= (1f - browFurrow * 0.08f) // Franze o cenho para o centro
-                    }
+                    val asymOffset = if (tx < 0) -browAsymmetry * 0.06f else browAsymmetry * 0.06f
+                    ty -= (smileAmount * 0.045f + mouthOpenRatio * 0.06f + asymOffset)
+                    ty += browFurrow * 0.05f
                 }
 
-                // C. Sorriso (eleva maçãs do rosto e alarga cantos da boca)
+                // Maçãs do rosto e Sorriso
                 if (smileAmount > 0.05f) {
                     if (ty in 0.05f..0.58f && abs(tx) in 0.18f..0.72f) {
-                        ty -= smileAmount * 0.075f * sin((abs(tx) - 0.18f) * 3f)
-                        tx *= (1f + smileAmount * 0.06f)
-                        tz += smileAmount * 0.05f
+                        ty -= smileAmount * 0.08f * sin((abs(tx) - 0.18f) * 3f)
+                        tx *= (1f + smileAmount * 0.065f)
+                        tz += smileAmount * 0.055f
                     }
                 }
 
-                // D. Boca e Mandíbula (Fala + Surpresa)
-                if (ty in 0.25f..0.75f && abs(tx) < 0.45f) {
-                    val mouthFactor = 1f - (abs(tx) / 0.45f)
-                    val openAmt = (speechWave * 0.11f + surpriseAmount * 0.09f) * mouthFactor
+                // Boca e Mandíbula (Abertura real da sua boca + Fala do assistente)
+                if (ty in 0.25f..0.78f && abs(tx) < 0.46f) {
+                    val mouthFactor = 1f - (abs(tx) / 0.46f)
+                    val totalOpen = max(speechWave * 0.12f, mouthOpenRatio * 0.14f) * mouthFactor
                     if (ty > 0.38f) {
-                        ty += openAmt // Lábio inferior e queixo descem
-                        tz += speechWave * 0.04f * sin(t * 20f + tx * 8f)
+                        ty += totalOpen
+                        tz += totalOpen * 0.35f
                     } else {
-                        ty -= openAmt * 0.35f // Lábio superior sobe levemente
+                        ty -= totalOpen * 0.35f
                     }
                 }
 
-                // E. Física de Mola Amortecida (Spring Physics para movimento ultra fluido)
                 val stiffness = v.speed
-                val damping = 0.72f
+                val damping = 0.70f
                 v.vx = (v.vx + (tx - v.curX) * stiffness) * damping
                 v.vy = (v.vy + (ty - v.curY) * stiffness) * damping
                 v.vz = (v.vz + (tz - v.curZ) * stiffness) * damping
@@ -416,39 +418,34 @@ class HolographicFaceView @JvmOverloads constructor(
                 v.curZ += v.vz
             }
 
-            // Rotação 3D Completa (Yaw, Pitch e Roll)
             val x1 = v.curX * cosY + v.curZ * sinY
             val z1 = -v.curX * sinY + v.curZ * cosY
-
             val y2 = v.curY * cosX - z1 * sinX
             val z2 = v.curY * sinX + z1 * cosX
-
             val x3 = x1 * cosZ - y2 * sinZ
             val y3 = x1 * sinZ + y2 * cosZ
 
-            // Projeção em Perspectiva
             val perspective = 2.4f / (2.4f - z2 * 0.58f)
             val px = cx + (x3 * faceHalfW) * perspective
             val py = cy + (y3 * faceHalfH) * perspective
 
-            // Luminância dinâmica com cintilação fluida (shimmer)
-            val shimmer = sin(t * 3.5f + v.phase) * 0.07f
+            val shimmer = sin(t * 4.0f + v.phase) * 0.08f
             val lum = (v.lum + shimmer + (z2 - v.baseZ) * 0.25f).coerceIn(0.05f, 1f)
 
             val rCol: Int
             val gCol: Int
             val bCol: Int
 
-            when (emotion) {
-                2 -> { // Pensando (Ouro Quântico / Ciano)
-                    rCol = (35 + lum * 220).toInt().coerceIn(20, 255)
-                    gCol = (65 + lum * 180).toInt().coerceIn(35, 255)
-                    bCol = (75 + lum * 135).toInt().coerceIn(45, 255)
+            when {
+                isListening -> { // Ouvindo você falar (Verde-Água Brilhante)
+                    rCol = (20 + lum * 180).toInt().coerceIn(20, 255)
+                    gCol = (55 + lum * 200).toInt().coerceIn(45, 255)
+                    bCol = (55 + lum * 195).toInt().coerceIn(45, 255)
                 }
-                1 -> { // Sorriso Radiante (Branco Gelo + Brilho Ciano Turquesa)
-                    rCol = (20 + lum.pow(1.1f) * 220).toInt().coerceIn(20, 255)
-                    gCol = (48 + lum.pow(1.0f) * 207).toInt().coerceIn(40, 255)
-                    bCol = (60 + lum.pow(0.95f) * 195).toInt().coerceIn(50, 255)
+                emotion == 2 -> { // Pensando (Âmbar Quântico)
+                    rCol = (40 + lum * 215).toInt().coerceIn(25, 255)
+                    gCol = (65 + lum * 180).toInt().coerceIn(40, 255)
+                    bCol = (75 + lum * 130).toInt().coerceIn(45, 255)
                 }
                 else -> { // Fiel à foto de referência
                     rCol = (24 + lum.pow(1.15f) * 226).toInt().coerceIn(20, 255)
@@ -464,7 +461,7 @@ class HolographicFaceView @JvmOverloads constructor(
             }
 
             blockPaint.color = Color.argb(alpha, rCol, gCol, bCol)
-            val halfSz = baseBlockHalf * v.sizeRatio * perspective * (1f + shimmer * 0.3f)
+            val halfSz = baseBlockHalf * v.sizeRatio * perspective * (1f + shimmer * 0.35f)
 
             canvas.drawRect(px - halfSz, py - halfSz, px + halfSz, py + halfSz, blockPaint)
 
@@ -484,29 +481,40 @@ class HolographicFaceView @JvmOverloads constructor(
 
     private fun drawHUD(canvas: Canvas, w: Float, h: Float) {
         textPaint.color = Color.parseColor("#B0BEC5")
-        textPaint.textSize = 25f
+        textPaint.textSize = 24f
 
-        canvas.drawText("HOLO // FLUID QUANTUM CORE", 40f, 85f, textPaint)
+        canvas.drawText("HOLO // FLUID QUANTUM CORE", 40f, 80f, textPaint)
 
-        if (emotion == 2) {
-            textPaint.color = Color.parseColor("#FFE082")
-            canvas.drawText("EXPRESSÃO: PROCESSANDO IA...", 40f, 125f, textPaint)
-        } else if (isFaceLocked) {
-            textPaint.color = Color.parseColor("#80DEEA")
-            canvas.drawText("EXPRESSÃO: $currentExpressionLabel", 40f, 125f, textPaint)
-        } else {
-            textPaint.color = Color.parseColor("#90A4AE")
-            canvas.drawText("MODO: $currentExpressionLabel", 40f, 125f, textPaint)
+        when {
+            isListening -> {
+                textPaint.color = Color.parseColor("#00E676")
+                canvas.drawText("STATUS: ESCUTANDO SUA VOZ...", 40f, 120f, textPaint)
+            }
+            emotion == 2 -> {
+                textPaint.color = Color.parseColor("#FFE082")
+                canvas.drawText("STATUS: PENSANDO...", 40f, 120f, textPaint)
+            }
+            else -> {
+                textPaint.color = Color.parseColor("#80DEEA")
+                canvas.drawText("EXPRESSÃO: $currentExpressionLabel", 40f, 120f, textPaint)
+            }
         }
 
-        textPaint.color = Color.parseColor("#80DEEA")
-        val configBtn = "[CONFIGURAR IA]"
-        val btnWidth = textPaint.measureText(configBtn)
-        canvas.drawText(configBtn, w - btnWidth - 40f, 85f, textPaint)
-
+        // Legenda inferior com quebra de linha automática se for grande
         textPaint.color = Color.WHITE
-        textPaint.textSize = 26f
-        val textWidth = textPaint.measureText(lastSpokenText)
-        canvas.drawText(lastSpokenText, (w - textWidth).coerceAtLeast(40f) / 2f, h - 80f, textPaint)
+        textPaint.textSize = 25f
+        val text = lastSpokenText
+        if (text.length > 42) {
+            val mid = text.lastIndexOf(' ', 42).let { if (it > 0) it else 42 }
+            val line1 = text.substring(0, mid)
+            val line2 = text.substring(mid).trim()
+            val w1 = textPaint.measureText(line1)
+            val w2 = textPaint.measureText(line2)
+            canvas.drawText(line1, (w - w1).coerceAtLeast(30f) / 2f, h - 115f, textPaint)
+            canvas.drawText(line2, (w - w2).coerceAtLeast(30f) / 2f, h - 75f, textPaint)
+        } else {
+            val tw = textPaint.measureText(text)
+            canvas.drawText(text, (w - tw).coerceAtLeast(30f) / 2f, h - 85f, textPaint)
+        }
     }
 }
