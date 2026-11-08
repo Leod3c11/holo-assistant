@@ -74,7 +74,6 @@ class MainActivity : AppCompatActivity() {
 
         initTTS()
 
-        // Toque na tela: se tocar no topo direito abre configurações de IA, senão escuta a voz
         holoView.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
                 if (event.y < 200 && event.x > holoView.width - 350) {
@@ -198,22 +197,21 @@ class MainActivity : AppCompatActivity() {
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "HOLO_TTS")
     }
 
-    // Processamento com IA Real + Ações de Sistema
     private fun processWithAI(userPrompt: String) {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val apiKey = prefs.getString(KEY_GEMINI_API, "") ?: ""
 
-        holoView.emotion = 2 // Estado pensando
+        holoView.emotion = 2
 
         if (apiKey.isEmpty()) {
-            // Fallback inteligente offline
             processLocalCommands(userPrompt)
             return
         }
 
         networkExecutor.execute {
             try {
-                val systemPrompt = "Você é o Holo, uma IA holográfica que controla o celular e responde perguntas de forma inteligente, concisa e natural em português. Se o usuário pedir para controlar o celular, adicione a respectiva tag ao final da resposta: [ACTION: LANTERNA_ON], [ACTION: LANTERNA_OFF], [ACTION: BATERIA], [ACTION: ABRIR: nome_do_app]. Responda em no máximo 2 frases para facilitar a fala."
+                val exprContext = "Expressão facial atual do usuário: ${holoView.currentExpressionLabel}."
+                val systemPrompt = "Você é o Holo, uma IA holográfica fluida que controla o celular e percebe as expressões faciais do usuário ($exprContext). Responda de forma inteligente, concisa e natural em português. Se o usuário pedir para controlar o celular, adicione a respectiva tag ao final da resposta: [ACTION: LANTERNA_ON], [ACTION: LANTERNA_OFF], [ACTION: BATERIA], [ACTION: ABRIR: nome_do_app]. Responda em no máximo 2 frases."
 
                 val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey")
                 val conn = url.openConnection() as HttpURLConnection
@@ -226,14 +224,12 @@ class MainActivity : AppCompatActivity() {
                     put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", userPrompt)))))
                 }
 
-                val os = conn.outputStream
-                val writer = OutputStreamWriter(os, "UTF-8")
+                val writer = OutputStreamWriter(conn.outputStream, "UTF-8")
                 writer.write(jsonBody.toString())
                 writer.flush()
                 writer.close()
 
-                val responseCode = conn.responseCode
-                if (responseCode == 200) {
+                if (conn.responseCode == 200) {
                     val reader = BufferedReader(InputStreamReader(conn.inputStream))
                     val response = reader.readText()
                     reader.close()
@@ -256,7 +252,6 @@ class MainActivity : AppCompatActivity() {
     private fun handleAIResponse(reply: String) {
         var cleanReply = reply
 
-        // Executar ações de controle do celular disparadas pela IA
         if (cleanReply.contains("[ACTION: LANTERNA_ON]")) {
             setFlashlight(true)
             cleanReply = cleanReply.replace("[ACTION: LANTERNA_ON]", "").trim()
@@ -266,7 +261,7 @@ class MainActivity : AppCompatActivity() {
             cleanReply = cleanReply.replace("[ACTION: LANTERNA_OFF]", "").trim()
         }
         if (cleanReply.contains("[ACTION: BATERIA]")) {
-            val (pct, chg) = getBatteryStatus()
+            val (pct, _) = getBatteryStatus()
             cleanReply = cleanReply.replace("[ACTION: BATERIA]", "").trim() + " (Bateria em $pct%)"
         }
         if (cleanReply.contains("[ACTION: ABRIR:")) {
@@ -312,7 +307,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             else -> {
-                speak("Recebi sua pergunta. Para eu responder qualquer assunto do mundo com IA ilimitada, toque em [CONFIGURAR IA] no topo e cole sua chave gratuita do Gemini!")
+                speak("Estou percebendo sua expressão (${holoView.currentExpressionLabel}). Para conversar sobre qualquer assunto com IA completa, toque em Configurar IA no topo!")
             }
         }
     }
@@ -378,10 +373,14 @@ class MainActivity : AppCompatActivity() {
                 .addOnSuccessListener { faces ->
                     if (faces.isNotEmpty()) {
                         val face = faces[0]
-                        holoView.updateFaceTracking(
-                            face.smilingProbability ?: 0f,
-                            face.headEulerAngleY,
-                            face.headEulerAngleX
+                        // Na câmera frontal espelhada, invertemos left/right eye open probability para espelhar o usuário
+                        holoView.updateDetailedFace(
+                            smileProb = face.smilingProbability ?: 0f,
+                            leftOpenProb = face.rightEyeOpenProbability ?: 1f,
+                            rightOpenProb = face.leftEyeOpenProbability ?: 1f,
+                            yaw = face.headEulerAngleY,
+                            pitch = face.headEulerAngleX,
+                            roll = face.headEulerAngleZ
                         )
                     } else {
                         holoView.resetTracking()
