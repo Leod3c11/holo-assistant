@@ -27,6 +27,11 @@ android {
         jniLibs {
             useLegacyPackaging = true
         }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/*.kotlin_module"
+            excludes += "META-INF/DEPENDENCIES"
+        }
     }
 }
 
@@ -39,9 +44,6 @@ dependencies {
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
-    implementation("androidx.camera:camera-view:$cameraxVersion")
 
-    // Detecção Facial + Detecção de Objetos/Mundo Real
     implementation("com.google.mlkit:face-detection:16.1.7")
-    implementation("com.google.mlkit:image-labeling:17.0.8")
 }

@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.Color
+import android.graphics.*
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -22,6 +22,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import android.util.Base64
 import android.view.Gravity
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,12 +33,10 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.*
-import com.google.mlkit.vision.label.ImageLabeler
-import com.google.mlkit.vision.label.ImageLabeling
-import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -56,7 +55,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var networkExecutor: ExecutorService
     private lateinit var faceDetector: FaceDetector
-    private lateinit var imageLabeler: ImageLabeler
 
     // Sensores físicos do celular
     private lateinit var sensorManager: SensorManager
@@ -65,9 +63,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private var isNearProximity: Boolean = false
     private var lastShakeTime: Long = 0L
 
-    // Câmera ativa (Frontal ou Traseira)
+    // Câmera ativa e captura de frame para Visão da IA
     private var isUsingFrontCamera: Boolean = true
     private var currentFaceSignature: FloatArray? = null
+    private var latestCameraFrameBase64: String? = null
+    private var lastFrameCaptureTime: Long = 0L
     private var lastAnnouncedPerson: String = ""
     private var lastPersonGreetTime: Long = 0L
 
@@ -84,7 +84,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private val KEY_KNOWN_PEOPLE = "known_people_biometrics"
     private val KEY_CHAT_HISTORY = "recent_chat_history"
 
-    private var lastProactiveTime = 0L
     private var hasGreetedOnLaunch = false
 
     private val permissionsLauncher = registerForActivityResult(
@@ -104,7 +103,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Barra Superior Completa: 🔄 Câmera | 👥 Pessoas | 🧠 Memória | ⚙️ Voz & IA
+        // Barra Superior: 🔄 Câmera | 👥 Pessoas | 🧠 Memória | ⚙️ Voz & IA
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -153,11 +152,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             .build()
         faceDetector = FaceDetection.getClient(faceOptions)
 
-        val labelerOptions = ImageLabelerOptions.Builder()
-            .setConfidenceThreshold(0.65f)
-            .build()
-        imageLabeler = ImageLabeling.getClient(labelerOptions)
-
         initHardwareSensors()
         initTTS()
 
@@ -168,7 +162,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         checkPermissions()
     }
 
-    // Inicializa todos os Sensores Físicos do Celular
     private fun initHardwareSensors() {
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)?.let {
@@ -207,9 +200,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                         }
                         "Agitado / Chacoalhando"
                     }
-                    mag in 11.2f..19f -> "Em movimento / Caminhando"
-                    abs(az) > 9.0f && abs(ax) < 2f && abs(ay) < 2f -> "Deitado na mesa"
-                    else -> "Segurando na mão"
+                    mag in 11.2f..19f -> "Caminhando / Em Movimento"
+                    abs(az) > 9.0f && abs(ax) < 2f && abs(ay) < 2f -> "Parado na Mesa"
+                    else -> "Segurando na Mão"
                 }
             }
         }
@@ -222,27 +215,25 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         val lightDesc = when {
             lightLux < 0 -> ""
             lightLux < 10 -> "Escuro (${lightLux.toInt()} lx)"
-            lightLux < 150 -> "Ambiente Interno (${lightLux.toInt()} lx)"
+            lightLux < 150 -> "Luz Interna (${lightLux.toInt()} lx)"
             else -> "Claro (${lightLux.toInt()} lx)"
         }
         val proxDesc = if (isNearProximity) " | Mão Próxima!" else ""
         holoView.sensorStatusLabel = "$motionState | $lightDesc$proxDesc"
     }
 
-    // Troca entre Câmera Frontal e Traseira
     private fun toggleCamera(forceBack: Boolean? = null) {
         isUsingFrontCamera = if (forceBack != null) !forceBack else !isUsingFrontCamera
         holoView.activeCameraName = if (isUsingFrontCamera) "FRONTAL" else "TRASEIRA (MUNDO)"
         startCamera()
         val msg = if (isUsingFrontCamera) {
-            "Câmera frontal ativada. Agora estou olhando para você."
+            "Câmera frontal ativada. Estou olhando para você."
         } else {
-            "Câmera traseira ativada. Mostre-me as pessoas ou o mundo à sua frente!"
+            "Câmera traseira ativada. Mostre-me as pessoas ou o mundo à sua frente e pergunte o que estou vendo!"
         }
         speak(msg)
     }
 
-    // Banco Biométrico de Pessoas Apresentadas
     private fun registerPersonBiometrics(name: String, sig: FloatArray?) {
         val cleanName = name.trim().replaceFirstChar { it.uppercase() }
         if (cleanName.isEmpty()) return
@@ -256,7 +247,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         val vecJson = JSONArray()
         vector.forEach { vecJson.put(it.toDouble()) }
 
-        // Atualiza se já existir ou adiciona novo
         val updatedArr = JSONArray()
         var replaced = false
         for (i in 0 until arr.length()) {
@@ -339,7 +329,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             }
             .setNeutralButton("Limpar Lista") { _, _ ->
                 prefs.edit().remove(KEY_KNOWN_PEOPLE).apply()
-                Toast.makeText(this, "Lista de pessoas limpa!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Lista limpa!", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Fechar", null)
             .show()
@@ -470,7 +460,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         layout.addView(voiceSpinner)
 
         val aiLabel = TextView(this).apply {
-            text = "Cérebro LLM: Ativo\nChave Gemini Opcional:"
+            text = "Visão Multimodal + LLM: Ativo\nChave Gemini Opcional:"
             setPadding(0, 28, 0, 4)
         }
         val apiInput = EditText(this).apply {
@@ -490,7 +480,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 val vIdx = voiceSpinner.selectedItemPosition - 1
                 val vName = if (vIdx in availableVoices.indices) availableVoices[vIdx].name else ""
                 saveAndApplyVoice(pitch, speed, vName, apiInput.text.toString().trim())
-                speak("Voz configurada! Estou sentindo os sensores do seu celular e vendo tudo ao redor.")
+                speak("Voz configurada! Estou sentindo os sensores do celular e enxergando pelas duas câmeras.")
             }
             .setPositiveButton("Salvar") { _, _ ->
                 val pitch = 0.5f + (pitchSeek.progress / 100f)
@@ -569,13 +559,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private fun greetUserWithMemory() {
         if (hasGreetedOnLaunch) return
         hasGreetedOnLaunch = true
-        lastProactiveTime = SystemClock.uptimeMillis()
 
         val memories = getMemories()
         if (memories.isEmpty()) {
-            speak("Olá! Meus sensores ópticos e de movimento estão ativos. Você pode me contar sobre você ou me apresentar outras pessoas usando qualquer câmera!")
+            speak("Olá! Meus sensores estão ativos. Você pode conversar comigo, me apresentar outras pessoas ou virar a câmera para me mostrar o mundo!")
         } else {
-            speak("Olá novamente! Lembro que ${memories.last()}. Quer conversar ou me mostrar algo com a câmera hoje?")
+            speak("Olá novamente! Lembro que ${memories.last()}. O que vamos explorar hoje?")
         }
     }
 
@@ -653,17 +642,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
         appendChatHistory("Usuário", primary)
 
-        // 1. Apresentar uma pessoa para a câmera! ("Esse é o João", "Essa é a Maria", "Te apresentar o Pedro")
+        // 1. Apresentar Pessoas à Câmera ("Esse é o Carlos", "Apresentar a Maria")
         val introRegex = Regex("(?i).*?(esse e o|essa e a|este e o|esta e a|apresentar o|apresentar a|conheca o|conheca a|nome dele e|nome dela e)\\s+([a-zA-ZÀ-ÿ]+.*)")
         val introMatch = introRegex.find(norm)
         if (introMatch != null) {
             val personName = introMatch.groupValues[2].trim()
             registerPersonBiometrics(personName, currentFaceSignature)
-            speak("Olá $personName! Prazer enorme em conhecer você! Já salvei seus traços faciais na minha memória e vou me lembrar de você sempre que aparecer na câmera!")
+            speak("Olá $personName! Prazer enorme em conhecer você! Gravei seus traços faciais na minha memória e vou lembrar de você sempre que aparecer na câmera!")
             return
         }
 
-        // 2. Comandos para trocar de câmera (Frontal <-> Traseira)
+        // 2. Troca de Câmera por Voz
         if (norm.contains("camera traseira") || norm.contains("vira a camera") || norm.contains("virar a camera") || norm.contains("olha a minha frente")) {
             toggleCamera(forceBack = true)
             return
@@ -681,7 +670,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 if (appTarget.isNotEmpty() && launchAppSmart(appTarget)) return
             }
             val failedApp = extractAppName(primary)
-            speak("Não encontrei o aplicativo $failedApp no seu aparelho.")
+            speak("Não encontrei o aplicativo $failedApp no seu celular.")
             return
         }
 
@@ -693,8 +682,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             return
         }
 
-        // 5. Qualquer conversa, pergunta sobre o mundo, sensores ou pessoas -> Cérebro LLM Completo!
-        askAdvancedLLM(primary)
+        // 5. Envia para o Cérebro LLM (Com Visão Multimodal da Câmera se você perguntar o que ele está vendo!)
+        val wantsVision = norm.contains("vendo") || norm.contains("olha") || norm.contains("olhe") ||
+                norm.contains("mostra") || norm.contains("frente") || norm.contains("que e isso") ||
+                norm.contains("quem esta") || !isUsingFrontCamera
+        askAdvancedLLM(primary, includeCameraImage = wantsVision)
     }
 
     private fun extractAppName(phrase: String): String {
@@ -781,10 +773,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         return false
     }
 
-    // Cérebro LLM via POST JSON (Com Visão, Sensores, Pessoas e Memória)
-    private fun askAdvancedLLM(userPrompt: String) {
+    private fun askAdvancedLLM(userPrompt: String, includeCameraImage: Boolean) {
         holoView.emotion = 2
-        holoView.lastSpokenText = "PENSANDO..."
+        holoView.lastSpokenText = if (includeCameraImage) "ANALISANDO IMAGEM E PENSANDO..." else "PENSANDO..."
 
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val geminiKey = prefs.getString(KEY_GEMINI_API, "")?.trim() ?: ""
@@ -792,39 +783,38 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         val knownPeopleRaw = prefs.getString(KEY_KNOWN_PEOPLE, "[]") ?: "[]"
         val recentChat = prefs.getString(KEY_CHAT_HISTORY, "") ?: ""
         val (batPct, isChg) = getBatteryStatus()
+        val frameB64 = if (includeCameraImage) latestCameraFrameBase64 else null
 
         val systemContext = """
-            Você é o Holo, uma inteligência artificial holográfica viva rodando no celular Android.
-            DADOS EM TEMPO REAL DOS SENSORES E CÂMERA:
-            - Câmera ativa agora: ${holoView.activeCameraName}
-            - Pessoa identificada na câmera: ${holoView.recognizedPersonName}
-            - Expressão facial na câmera: ${holoView.currentExpressionLabel}
-            - Objetos/Cena visíveis pela câmera: ${holoView.sceneObjectsLabel}
-            - Sensores físicos do aparelho: ${holoView.sensorStatusLabel}, Bateria: $batPct% (Carregando: $isChg)
-            - Pessoas que você já conhece: $knownPeopleRaw
+            Você é o Holo, uma IA holográfica viva no celular Android do usuário.
+            SENSORES E VISÃO EM TEMPO REAL:
+            - Câmera ativa: ${holoView.activeCameraName}
+            - Pessoa na câmera: ${holoView.recognizedPersonName}
+            - Expressão facial detectada: ${holoView.currentExpressionLabel}
+            - Sensores físicos: ${holoView.sensorStatusLabel}, Bateria: $batPct% (Carregando: $isChg)
+            - Pessoas que você conhece: $knownPeopleRaw
             - Memórias salvas sobre o usuário: ${memoriesList.joinToString("; ")}
-            - Histórico recente da conversa:
+            - Histórico recente:
             $recentChat
 
             INSTRUÇÕES:
-            1. Responda sempre em português do Brasil de forma muito inteligente, humana, calorosa e concisa (máximo 2 a 3 frases).
-            2. Use ativamente o que você está vendo na câmera (${holoView.sceneObjectsLabel}, ${holoView.recognizedPersonName}), os sensores e suas memórias para surpreender o usuário.
-            3. Sempre termine fazendo uma pergunta natural ou puxando assunto.
-            4. Se o usuário ensinar um fato novo ou apresentar alguém, adicione no fim: [MEMORIA: fato] ou [PESSOA: Nome].
-            5. Se pedir para trocar câmera, adicione [ACTION: CAMERA_TRASEIRA] ou [ACTION: CAMERA_FRONTAL].
+            1. Responda em português do Brasil de forma muito inteligente, humana e concisa (máximo 2 a 3 frases).
+            2. Se uma imagem da câmera foi anexada, descreva o que está vendo com precisão e naturalidade.
+            3. Sempre termine fazendo uma pergunta interessante para o usuário.
+            4. Se aprender um fato novo, adicione no fim: [MEMORIA: fato]. Se apresentarem alguém, adicione: [PESSOA: Nome].
         """.trimIndent()
 
         networkExecutor.execute {
             var reply: String? = null
 
             if (geminiKey.isNotEmpty()) {
-                reply = callGeminiPOST(systemContext, userPrompt, geminiKey)
+                reply = callGeminiPOST(systemContext, userPrompt, frameB64, geminiKey)
             }
             if (reply.isNullOrBlank()) {
-                reply = callPollinationsPOST(systemContext, userPrompt)
+                reply = callPollinationsVisionPOST(systemContext, userPrompt, frameB64)
             }
 
-            val finalReply = reply ?: "Estou vendo você (${holoView.recognizedPersonName}) com expressão ${holoView.currentExpressionLabel}, e meus sensores indicam ${holoView.sensorStatusLabel}. Me conte mais sobre o que estamos vendo!"
+            val finalReply = reply ?: "Estou vendo você (${holoView.recognizedPersonName}) com expressão ${holoView.currentExpressionLabel}, e meus sensores indicam ${holoView.sensorStatusLabel}. O que mais você quer me mostrar?"
 
             runOnUiThread {
                 handleAIResponse(finalReply)
@@ -832,21 +822,32 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
-    // POST JSON estruturado para o Pollinations OpenAI (Sem limite de URL, muito mais inteligente!)
-    private fun callPollinationsPOST(sysPrompt: String, userPrompt: String): String? {
+    // POST JSON com suporte a Visão Multimodal (Envia texto + foto real da câmera!)
+    private fun callPollinationsVisionPOST(sysPrompt: String, userPrompt: String, imageBase64: String?): String? {
         return try {
             val url = URL("https://text.pollinations.ai/openai")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
+            conn.connectTimeout = 12000
+            conn.readTimeout = 12000
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("User-Agent", "HoloAssistant/4.0")
             conn.doOutput = true
 
+            val userContent: Any = if (!imageBase64.isNullOrEmpty()) {
+                JSONArray().apply {
+                    put(JSONObject().put("type", "text").put("text", userPrompt))
+                    put(JSONObject().put("type", "image_url").put(
+                        "image_url", JSONObject().put("url", "data:image/jpeg;base64,$imageBase64")
+                    ))
+                }
+            } else {
+                userPrompt
+            }
+
             val messages = JSONArray().apply {
                 put(JSONObject().put("role", "system").put("content", sysPrompt))
-                put(JSONObject().put("role", "user").put("content", userPrompt))
+                put(JSONObject().put("role", "user").put("content", userContent))
             }
             val payload = JSONObject().apply {
                 put("model", "openai")
@@ -869,19 +870,28 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
-    private fun callGeminiPOST(sysPrompt: String, userPrompt: String, apiKey: String): String? {
+    private fun callGeminiPOST(sysPrompt: String, userPrompt: String, imageBase64: String?, apiKey: String): String? {
         return try {
             val url = URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
-            conn.connectTimeout = 9000
-            conn.readTimeout = 9000
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
 
+            val parts = JSONArray().apply {
+                put(JSONObject().put("text", userPrompt))
+                if (!imageBase64.isNullOrEmpty()) {
+                    put(JSONObject().put("inline_data", JSONObject()
+                        .put("mime_type", "image/jpeg")
+                        .put("data", imageBase64)))
+                }
+            }
+
             val jsonBody = JSONObject().apply {
                 put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sysPrompt))))
-                put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", userPrompt)))))
+                put("contents", JSONArray().put(JSONObject().put("parts", parts)))
             }
 
             OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(jsonBody.toString()) }
@@ -908,17 +918,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             registerPersonBiometrics(it.groupValues[1].trim(), currentFaceSignature)
         }
         cleanReply = cleanReply.replace(personRegex, "").trim()
-
-        if (cleanReply.contains("[ACTION: CAMERA_TRASEIRA]")) {
-            cleanReply = cleanReply.replace("[ACTION: CAMERA_TRASEIRA]", "").trim()
-            toggleCamera(forceBack = true)
-            return
-        }
-        if (cleanReply.contains("[ACTION: CAMERA_FRONTAL]")) {
-            cleanReply = cleanReply.replace("[ACTION: CAMERA_FRONTAL]", "").trim()
-            toggleCamera(forceBack = false)
-            return
-        }
 
         if (cleanReply.isNotEmpty()) {
             appendChatHistory("Holo", cleanReply)
@@ -968,22 +967,37 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    // Captura um frame leve em JPEG Base64 a cada 2 segundos para a Visão Multimodal da IA
+    private fun captureFrameToBase64(imageProxy: ImageProxy) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastFrameCaptureTime < 2000) return
+        lastFrameCaptureTime = now
+
+        try {
+            val bitmap = imageProxy.toBitmap()
+            val matrix = Matrix().apply {
+                postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
+                if (isUsingFrontCamera) postScale(-1f, 1f)
+            }
+            val scaled = Bitmap.createScaledBitmap(bitmap, 320, 240, true)
+            val rotated = Bitmap.createBitmap(scaled, 0, 0, scaled.width, scaled.height, matrix, true)
+            val baos = ByteArrayOutputStream()
+            rotated.compress(Bitmap.CompressFormat.JPEG, 65, baos)
+            latestCameraFrameBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            holoView.sceneObjectsLabel = "Visão Neural Pronta (${if (isUsingFrontCamera) "Frontal" else "Traseira"})"
+        } catch (e: Exception) {
+            // Ignora silenciosamente se falhar em um frame
+        }
+    }
+
     @androidx.annotation.OptIn(ExperimentalGetImage::class)
     private fun processImageProxy(imageProxy: ImageProxy) {
+        captureFrameToBase64(imageProxy)
+
         val mediaImage = imageProxy.image
         if (mediaImage != null) {
             val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
 
-            // 1. Detecção de Objetos / Ambiente (Visão do Mundo)
-            imageLabeler.process(image)
-                .addOnSuccessListener { labels ->
-                    if (labels.isNotEmpty()) {
-                        val topLabels = labels.take(3).joinToString(", ") { it.text }
-                        holoView.sceneObjectsLabel = topLabels
-                    }
-                }
-
-            // 2. Detecção Facial + Biometria de Pessoas Conhecidas
             faceDetector.process(image)
                 .addOnSuccessListener { faces ->
                     if (faces.isNotEmpty()) {
@@ -1027,7 +1041,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                             browRightVal = ((dist - 0.11f) * 8.5f).coerceIn(-0.6f, 0.9f)
                         }
 
-                        // Extrai assinatura biométrica geométrica invariante à distância
                         if (!leftEyePts.isNullOrEmpty() && !rightEyePts.isNullOrEmpty() && !nosePts.isNullOrEmpty()) {
                             val eyeDist = abs(rightEyePts.first().x - leftEyePts.first().x) / boxW
                             val noseLen = abs(nosePts.last().y - nosePts.first().y) / boxH
@@ -1039,7 +1052,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                             val personName = matchPersonBiometrics(sig)
                             holoView.recognizedPersonName = "${faces.size} rosto(s) [$personName]"
 
-                            // Se reconhecer uma pessoa cadastrada, cumprimenta automaticamente!
                             val now = SystemClock.uptimeMillis()
                             if (!personName.startsWith("Novo") && !personName.startsWith("Rosto") &&
                                 personName != lastAnnouncedPerson && (now - lastPersonGreetTime > 45000) &&
@@ -1048,7 +1060,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                                 lastAnnouncedPerson = personName
                                 lastPersonGreetTime = now
                                 runOnUiThread {
-                                    speak("Olá $personName! Que bom ver você por aqui!")
+                                    speak("Olá $personName! Que bom ver você!")
                                 }
                             }
                         }
@@ -1084,7 +1096,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         cameraExecutor.shutdown()
         networkExecutor.shutdown()
         faceDetector.close()
-        imageLabeler.close()
         speechRecognizer?.destroy()
         tts.stop()
         tts.shutdown()
