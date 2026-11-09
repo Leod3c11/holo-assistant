@@ -1183,7 +1183,31 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 .addOnSuccessListener { faces ->
                     if (faces.isNotEmpty()) {
                         val face = faces[0]
-                        val boxW = face.boundingBox.width().toFloat().coerceAtLeast(1f)
+                        val faceBox = face.boundingBox
+                        val boxW = faceBox.width().toFloat().coerceAtLeast(1f)
+                        val boxH = faceBox.height().toFloat().coerceAtLeast(1f)
+                        fun normalizedContour(type: Int): List<PointF> {
+                            val pts = face.getContour(type)?.points ?: return emptyList()
+                            return pts.map { p ->
+                                val nx = ((p.x - faceBox.left) / boxW).coerceIn(0f, 1f)
+                                PointF(if (isUsingFrontCamera) 1f - nx else nx,
+                                    ((p.y - faceBox.top) / boxH).coerceIn(0f, 1f))
+                            }
+                        }
+                        val liveContours = mapOf(
+                            "face" to normalizedContour(FaceContour.FACE),
+                            "leftEye" to normalizedContour(FaceContour.LEFT_EYE),
+                            "rightEye" to normalizedContour(FaceContour.RIGHT_EYE),
+                            "upperLipTop" to normalizedContour(FaceContour.UPPER_LIP_TOP),
+                            "upperLipBottom" to normalizedContour(FaceContour.UPPER_LIP_BOTTOM),
+                            "lowerLipTop" to normalizedContour(FaceContour.LOWER_LIP_TOP),
+                            "lowerLipBottom" to normalizedContour(FaceContour.LOWER_LIP_BOTTOM),
+                            "noseBridge" to normalizedContour(FaceContour.NOSE_BRIDGE),
+                            "noseBottom" to normalizedContour(FaceContour.NOSE_BOTTOM),
+                            "leftBrow" to normalizedContour(FaceContour.LEFT_EYEBROW_TOP),
+                            "rightBrow" to normalizedContour(FaceContour.RIGHT_EYEBROW_TOP)
+                        )
+                        holoView.post { holoView.updateFaceContours(liveContours) }
                         val boxH = face.boundingBox.height().toFloat().coerceAtLeast(1f)
 
                         var mouthOpenVal = 0f
@@ -1267,6 +1291,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                             roll = face.headEulerAngleZ
                         )
                     } else {
+                        holoView.clearFaceContours()
                         holoView.resetTracking()
                     }
                 }
