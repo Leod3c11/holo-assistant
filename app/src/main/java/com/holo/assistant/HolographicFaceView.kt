@@ -17,6 +17,16 @@ class HolographicFaceView @JvmOverloads constructor(
     // Textura Full-Screen 9:16 Contínua sem emendas
     private val refBitmap: Bitmap = HoloReferenceTexture.loadBitmap()
 
+    // Densidade luminosa pré-calculada da referência: os dígitos ocupam a silhueta
+    // real do rosto, em vez de serem apenas uma camada aleatória sobre a fotografia.
+    private val binaryCols = 30
+    private val binaryRows = 54
+    private val binaryDensity = FloatArray(binaryCols * binaryRows)
+    private val binaryPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create("monospace", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+
     private val meshW = 30
     private val meshH = 30
     private val vertCount = (meshW + 1) * (meshH + 1)
@@ -54,7 +64,7 @@ class HolographicFaceView @JvmOverloads constructor(
         val isBrightDrip: Boolean
     )
 
-    private val rainStreams = ArrayList<LiveRainStream>(150)
+    private val rainStreams = ArrayList<LiveRainStream>(220)
     private val random = Random(77)
 
     private var headYaw = 0f
@@ -107,14 +117,23 @@ class HolographicFaceView @JvmOverloads constructor(
     var lastSpokenText: String = "TOQUE NA FACE PARA CONVERSAR"
 
     init {
-        for (i in 0 until 150) {
+        for (gy in 0 until binaryRows) {
+            for (gx in 0 until binaryCols) {
+                val px = ((gx + 0.5f) / binaryCols * refBitmap.width).toInt().coerceIn(0, refBitmap.width - 1)
+                val py = ((gy + 0.5f) / binaryRows * refBitmap.height).toInt().coerceIn(0, refBitmap.height - 1)
+                val pixel = refBitmap.getPixel(px, py)
+                val luminance = (Color.red(pixel) * 0.2126f + Color.green(pixel) * 0.7152f + Color.blue(pixel) * 0.0722f) / 255f
+                binaryDensity[gy * binaryCols + gx] = luminance
+            }
+        }
+        for (i in 0 until 220) {
             val x = random.nextFloat()
             rainStreams.add(
                 LiveRainStream(
                     xNorm = x,
                     yHead = random.nextFloat(),
                     speed = 0.006f + random.nextFloat() * 0.012f,
-                    len = 16 + random.nextInt(20),
+                    len = 20 + random.nextInt(25),
                     isBrightDrip = random.nextFloat() < 0.55f
                 )
             )
@@ -362,8 +381,12 @@ class HolographicFaceView @JvmOverloads constructor(
             }
         }
 
-        // 1. Malha facial animada: movimento contínuo, perspectiva e expressões.
+        // 1. A textura original permanece como referência anatômica, mas translúcida.
+        // A leitura visual principal passa a ser formada pelos próprios dígitos.
+        meshPaint.alpha = 82
         canvas.drawBitmapMesh(refBitmap, meshW, meshH, meshVerts, 0, meshColors, 0, meshPaint)
+        meshPaint.alpha = 255
+        drawBinaryFace(canvas, w, h, t)
 
         // 2. Camada holográfica dinâmica: interferência luminosa e varredura volumétrica.
         // A identidade/textura original permanece intacta sob a luz holográfica.
@@ -393,7 +416,7 @@ class HolographicFaceView @JvmOverloads constructor(
         }
         // Pontos luminosos em órbita dão profundidade e movimento ao holograma.
         val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        for (p in 0 until 54) {
+        for (p in 0 until 72) {
             val phase = t * (0.22f + (p % 5) * 0.035f) + p * 0.61f
             val px = w * (0.5f + 0.39f * cos(phase + p * 0.13f))
             val py = h * (0.53f + 0.39f * sin(phase * 0.83f + p * 0.27f))
@@ -415,7 +438,7 @@ class HolographicFaceView @JvmOverloads constructor(
         canvas.drawRect(w * 0.08f, glitchY, w * 0.92f, glitchY + max(1.5f, h * 0.0018f), glitchPaint)
 
         // 3. Cascatas Binárias Vivas em Tela Cheia
-        rainPaint.textSize = w * 0.027f
+        rainPaint.textSize = w * 0.030f
         for (stream in rainStreams) {
             stream.yHead += stream.speed * (1f + if (isListening) micVoiceLevel * 1.5f else 0f)
             if (stream.yHead > 1.20f) stream.yHead = -0.15f
@@ -426,7 +449,7 @@ class HolographicFaceView @JvmOverloads constructor(
             for (k in 0 until stream.len) {
                 val syNorm = stream.yHead - k * 0.022f
                 if (syNorm < 0f || syNorm > 1f) continue
-                if (isCenterFace && syNorm in 0.42f..0.70f && k % 3 != 0) continue
+                if (isCenterFace && syNorm in 0.36f..0.90f && k % 4 != 0) continue
 
                 val sy = syNorm * h
                 val fade = (1f - k.toFloat() / stream.len).coerceIn(0f, 1f)
@@ -456,6 +479,30 @@ class HolographicFaceView @JvmOverloads constructor(
 
         drawCleanBottomHUD(canvas, w, h)
         postInvalidateOnAnimation()
+    }
+
+    /**
+     * Reconstrói visualmente a referência com 0/1. A densidade vem dos pixels
+     * reais da face aprovada; a animação de olhos, boca e sobrancelhas continua
+     * sendo aplicada pela malha antes desta camada.
+     */
+    private fun drawBinaryFace(canvas: Canvas, w: Float, h: Float, time: Float) {
+        val cellW = w / binaryCols
+        val cellH = h / binaryRows
+        binaryPaint.textSize = min(cellW * 0.88f, cellH * 0.82f)
+        for (gy in 0 until binaryRows) {
+            val y = (gy + 0.72f) * cellH
+            for (gx in 0 until binaryCols) {
+                val density = binaryDensity[gy * binaryCols + gx]
+                if (density < 0.16f) continue
+                val shimmer = 0.72f + 0.28f * sin(time * 2.2f + gx * 0.71f + gy * 0.39f)
+                val alpha = ((38f + density * 205f) * shimmer).toInt().coerceIn(24, 235)
+                binaryPaint.color = if ((gx + gy) % 7 == 0) Color.rgb(190, 255, 255) else Color.rgb(70, 225, 255)
+                binaryPaint.alpha = alpha
+                val bit = if (((gx * 13 + gy * 7 + (time * 3f).toInt()) and 1) == 0) "0" else "1"
+                canvas.drawText(bit, (gx + 0.5f) * cellW, y, binaryPaint)
+            }
+        }
     }
 
     private fun drawCleanBottomHUD(canvas: Canvas, w: Float, h: Float) {
