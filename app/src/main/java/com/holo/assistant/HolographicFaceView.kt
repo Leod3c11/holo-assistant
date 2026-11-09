@@ -256,8 +256,8 @@ class HolographicFaceView @JvmOverloads constructor(
         val cosZ = cos(headRoll)
         val sinZ = sin(headRoll)
 
-        // Coordenadas anatômicas na textura 9:16 uniforme (300x550):
-        // Olhos: v = 0.482 | Sobrancelhas: v = 0.442 | Nariz: v = 0.600 | Boca: v = 0.650 | Queixo: v = 0.725
+        // Landmarks alinhados à referência facial exibida em tela (coordenadas normalizadas).
+        // Olhos: ~0.48 | sobrancelhas: ~0.44 | ponta do nariz: ~0.72 | boca: ~0.84 | queixo: ~0.93
         var idx = 0
         var cIdx = 0
         for (iy in 0..meshH) {
@@ -268,7 +268,7 @@ class HolographicFaceView @JvmOverloads constructor(
                 var du = 0f
                 var dv = 0f
 
-                val faceMask = radialWeight(u, v, 0.50f, 0.54f, 0.34f, 0.24f)
+                val faceMask = radialWeight(u, v, 0.50f, 0.62f, 0.34f, 0.38f)
 
                 if (faceMask > 0.01f) {
                     // A. Pálpebras e Olhos (Esq=(0.358, 0.482), Dir=(0.642, 0.482))
@@ -301,28 +301,28 @@ class HolographicFaceView @JvmOverloads constructor(
                         du += (0.50f - u) * browFurrow * 0.35f * wGlabella
                     }
 
-                    // C. Sorriso e Bochechas (Cantos da boca em v = 0.650)
+                    // C. Sorriso e Bochechas (cantos da boca em v ≈ 0.84)
                     if (smileLeft > 0.01f) {
-                        val wCornerL = radialWeight(u, v, 0.410f, 0.650f, 0.078f, 0.042f)
-                        val wCheekL = radialWeight(u, v, 0.335f, 0.580f, 0.095f, 0.050f)
+                        val wCornerL = radialWeight(u, v, 0.410f, 0.835f, 0.078f, 0.035f)
+                        val wCheekL = radialWeight(u, v, 0.335f, 0.755f, 0.095f, 0.050f)
                         dv -= smileLeft * 0.038f * wCornerL
                         du -= smileLeft * 0.032f * wCornerL
                         dv -= smileLeft * 0.022f * wCheekL
                     }
                     if (smileRight > 0.01f) {
-                        val wCornerR = radialWeight(u, v, 0.590f, 0.650f, 0.078f, 0.042f)
-                        val wCheekR = radialWeight(u, v, 0.665f, 0.580f, 0.095f, 0.050f)
+                        val wCornerR = radialWeight(u, v, 0.590f, 0.835f, 0.078f, 0.035f)
+                        val wCheekR = radialWeight(u, v, 0.665f, 0.755f, 0.095f, 0.050f)
                         dv -= smileRight * 0.038f * wCornerR
                         du += smileRight * 0.032f * wCornerR
                         dv -= smileRight * 0.022f * wCheekR
                     }
 
-                    // D. Abertura Labial e Mandíbula (Boca em v = 0.650, Queixo em v = 0.725)
-                    val wUpperLip = radialWeight(u, v, 0.50f, 0.638f, 0.095f, 0.022f)
-                    val wLowerLip = radialWeight(u, v, 0.50f, 0.668f, 0.105f, 0.034f)
-                    val wChin = radialWeight(u, v, 0.50f, 0.725f, 0.135f, 0.045f)
+                    // D. Abertura labial e mandíbula (boca em v ≈ 0.84; queixo em v ≈ 0.93)
+                    val wUpperLip = radialWeight(u, v, 0.50f, 0.826f, 0.095f, 0.018f)
+                    val wLowerLip = radialWeight(u, v, 0.50f, 0.852f, 0.105f, 0.030f)
+                    val wChin = radialWeight(u, v, 0.50f, 0.925f, 0.135f, 0.040f)
 
-                    if (v < 0.650f) {
+                    if (v < 0.840f) {
                         dv -= activeMouthOpen * 0.018f * wUpperLip
                     } else {
                         dv += activeMouthOpen * 0.055f * wLowerLip
@@ -334,10 +334,10 @@ class HolographicFaceView @JvmOverloads constructor(
                         du += (u - 0.50f) * mouthWidthMod * 0.42f * wMouthSpan
                     }
 
-                    // E. Rotação 3D Real com Relevo do Nariz (v = 0.600)
+                    // E. Rotação 3D com relevo centrado na região real do nariz (v ≈ 0.72)
                     val nx = (u - 0.50f) * 2f
                     val ny = (v - 0.54f) * 2f
-                    val noseBump = radialWeight(u, v, 0.50f, 0.595f, 0.068f, 0.055f) * 0.20f
+                    val noseBump = radialWeight(u, v, 0.50f, 0.715f, 0.068f, 0.055f) * 0.20f
                     val zDepth = (faceMask * 0.30f + noseBump)
 
                     val x1 = nx * cosY + zDepth * sinY
