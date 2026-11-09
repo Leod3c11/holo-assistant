@@ -225,25 +225,6 @@ class HolographicFaceView @JvmOverloads constructor(
             targetSmileRight = targetSmileLeft
             targetBrowLeft = cos(t * 0.4f) * 0.12f
             targetBrowRight = targetBrowLeft
-            // Micro-expressões autônomas discretas: olhar atento, sorriso contido,
-            // lábios pressionados, leve contração nasal e sobrancelha assimétrica.
-            if (timeMs > microExpressionUntil) {
-                microExpressionKind = random.nextInt(5)
-                microExpressionUntil = timeMs + 2200L + random.nextInt(2200)
-            }
-            val microPulse = if (timeMs % 7200L < 1050L) 1f else 0f
-            targetLowerLidTension = when (microExpressionKind) {
-                0 -> 0.09f * microPulse
-                1 -> 0.05f * microPulse
-                else -> 0f
-            }
-            targetCheekRaise = if (microExpressionKind == 1) 0.13f * microPulse else 0f
-            targetLipPress = if (microExpressionKind == 2) 0.11f * microPulse else 0f
-            targetNoseWrinkle = if (microExpressionKind == 3) 0.07f * microPulse else 0f
-            if (microExpressionKind == 4) {
-                targetBrowLeft += 0.075f * microPulse
-                targetBrowRight -= 0.035f * microPulse
-            }
         }
 
         currentSaccadeX += (saccadeTargetX - currentSaccadeX) * 0.16f
@@ -384,10 +365,48 @@ class HolographicFaceView @JvmOverloads constructor(
             }
         }
 
-        // 1. Desenha a Malha 3D em Tela Cheia Uniforme (0..w, 0..h)
+        // 1. Malha facial animada: movimento contínuo, perspectiva e expressões.
         canvas.drawBitmapMesh(refBitmap, meshW, meshH, meshVerts, 0, meshColors, 0, meshPaint)
 
-        // 2. Cascatas Binárias Vivas em Tela Cheia
+        // 2. Camada holográfica dinâmica: brilho ciano, contorno pulsante,
+        // varredura horizontal e partículas orbitais (não é uma imagem parada).
+        val holoPulse = (0.5f + 0.5f * sin(t * 2.1f))
+        val holoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = max(1.2f, w * 0.0022f)
+            color = Color.rgb(95, 238, 255)
+            alpha = (22 + holoPulse * 34f).toInt()
+        }
+        val faceOval = RectF(w * 0.17f, h * 0.19f, w * 0.83f, h * 0.91f)
+        canvas.drawOval(faceOval, holoPaint)
+        holoPaint.strokeWidth = max(1f, w * 0.0011f)
+        holoPaint.alpha = (12 + holoPulse * 18f).toInt()
+        val scanY = (timeMs % 2600L).toFloat() / 2600f * h
+        val scanPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = max(2f, h * 0.002f)
+            color = Color.rgb(125, 245, 255)
+            alpha = 38
+        }
+        canvas.drawLine(w * 0.12f, scanY, w * 0.88f, scanY, scanPaint)
+        val fineScan = Paint().apply { color = Color.argb(20, 110, 235, 255); strokeWidth = 1f }
+        var scanLine = 0f
+        while (scanLine < h) {
+            canvas.drawLine(0f, scanLine, w, scanLine, fineScan)
+            scanLine += max(5f, h / 150f)
+        }
+        // Pontos luminosos em órbita dão profundidade e movimento ao holograma.
+        val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        for (p in 0 until 26) {
+            val phase = t * (0.22f + (p % 5) * 0.035f) + p * 0.61f
+            val px = w * (0.5f + 0.39f * cos(phase + p * 0.13f))
+            val py = h * (0.53f + 0.39f * sin(phase * 0.83f + p * 0.27f))
+            particlePaint.alpha = (55 + 115 * (0.5f + 0.5f * sin(phase * 2f))).toInt()
+            val radius = if (p % 6 == 0) 2.8f else 1.3f
+            canvas.drawCircle(px, py, radius, particlePaint)
+        }
+
+        // 3. Cascatas Binárias Vivas em Tela Cheia
         rainPaint.textSize = w * 0.023f
         for (stream in rainStreams) {
             stream.yHead += stream.speed * (1f + if (isListening) micVoiceLevel * 1.5f else 0f)
