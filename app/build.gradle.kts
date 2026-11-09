@@ -11,8 +11,13 @@ android {
         applicationId = "com.holo.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "3.0"
+
+        ndk {
+            abiFilters.add("arm64-v8a")
+            abiFilters.add("armeabi-v7a")
+        }
     }
 
     compileOptions {
@@ -25,12 +30,11 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            useLegacyPackaging = false
+            keepDebugSymbols.add("**/*.so")
         }
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            excludes += "META-INF/*.kotlin_module"
-            excludes += "META-INF/DEPENDENCIES"
+            excludes += "/META-INF/**"
         }
     }
 }
