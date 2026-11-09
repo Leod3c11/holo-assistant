@@ -225,6 +225,25 @@ class HolographicFaceView @JvmOverloads constructor(
             targetSmileRight = targetSmileLeft
             targetBrowLeft = cos(t * 0.4f) * 0.12f
             targetBrowRight = targetBrowLeft
+            // Micro-expressões autônomas discretas: olhar atento, sorriso contido,
+            // lábios pressionados, leve contração nasal e sobrancelha assimétrica.
+            if (timeMs > microExpressionUntil) {
+                microExpressionKind = random.nextInt(5)
+                microExpressionUntil = timeMs + 2200L + random.nextInt(2200)
+            }
+            val microPulse = if (timeMs % 7200L < 1050L) 1f else 0f
+            targetLowerLidTension = when (microExpressionKind) {
+                0 -> 0.09f * microPulse
+                1 -> 0.05f * microPulse
+                else -> 0f
+            }
+            targetCheekRaise = if (microExpressionKind == 1) 0.13f * microPulse else 0f
+            targetLipPress = if (microExpressionKind == 2) 0.11f * microPulse else 0f
+            targetNoseWrinkle = if (microExpressionKind == 3) 0.07f * microPulse else 0f
+            if (microExpressionKind == 4) {
+                targetBrowLeft += 0.075f * microPulse
+                targetBrowRight -= 0.035f * microPulse
+            }
         }
 
         currentSaccadeX += (saccadeTargetX - currentSaccadeX) * 0.16f
