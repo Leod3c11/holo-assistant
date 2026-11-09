@@ -54,7 +54,7 @@ class HolographicFaceView @JvmOverloads constructor(
         val isBrightDrip: Boolean
     )
 
-    private val rainStreams = ArrayList<LiveRainStream>(65)
+    private val rainStreams = ArrayList<LiveRainStream>(150)
     private val random = Random(77)
 
     private var headYaw = 0f
@@ -107,14 +107,14 @@ class HolographicFaceView @JvmOverloads constructor(
     var lastSpokenText: String = "TOQUE NA FACE PARA CONVERSAR"
 
     init {
-        for (i in 0 until 65) {
+        for (i in 0 until 150) {
             val x = random.nextFloat()
             rainStreams.add(
                 LiveRainStream(
                     xNorm = x,
                     yHead = random.nextFloat(),
-                    speed = 0.004f + random.nextFloat() * 0.008f,
-                    len = 10 + random.nextInt(14),
+                    speed = 0.006f + random.nextFloat() * 0.012f,
+                    len = 16 + random.nextInt(20),
                     isBrightDrip = random.nextFloat() < 0.55f
                 )
             )
@@ -318,20 +318,17 @@ class HolographicFaceView @JvmOverloads constructor(
                     }
 
                     // D. Abertura labial e mandíbula (boca em v ≈ 0.84; queixo em v ≈ 0.93)
-                    val wUpperLip = radialWeight(u, v, 0.50f, 0.826f, 0.095f, 0.018f)
-                    val wLowerLip = radialWeight(u, v, 0.50f, 0.852f, 0.105f, 0.030f)
-                    val wChin = radialWeight(u, v, 0.50f, 0.925f, 0.135f, 0.040f)
+                    val wUpperLip = radialWeight(u, v, 0.50f, 0.835f, 0.082f, 0.012f)
+                    val wLowerLip = radialWeight(u, v, 0.50f, 0.852f, 0.082f, 0.014f)
 
-                    if (v < 0.840f) {
-                        dv -= activeMouthOpen * 0.018f * wUpperLip
-                    } else {
-                        dv += activeMouthOpen * 0.055f * wLowerLip
-                        dv += activeMouthOpen * 0.040f * wChin
-                    }
+                    // A abertura atua somente nos lábios: lábio superior sobe e inferior desce.
+                    // O queixo fica ancorado para não parecer que a boca está nele.
+                    dv -= activeMouthOpen * 0.022f * wUpperLip
+                    dv += activeMouthOpen * 0.024f * wLowerLip
 
                     if (abs(mouthWidthMod) > 0.02f) {
-                        val wMouthSpan = radialWeight(u, v, 0.50f, 0.650f, 0.12f, 0.036f)
-                        du += (u - 0.50f) * mouthWidthMod * 0.42f * wMouthSpan
+                        val wMouthSpan = radialWeight(u, v, 0.50f, 0.844f, 0.105f, 0.022f)
+                        du += (u - 0.50f) * mouthWidthMod * 0.28f * wMouthSpan
                     }
 
                     // E. Rotação 3D com relevo centrado na região real do nariz (v ≈ 0.72)
@@ -368,8 +365,8 @@ class HolographicFaceView @JvmOverloads constructor(
         // 1. Malha facial animada: movimento contínuo, perspectiva e expressões.
         canvas.drawBitmapMesh(refBitmap, meshW, meshH, meshVerts, 0, meshColors, 0, meshPaint)
 
-        // 2. Camada holográfica dinâmica: brilho ciano, contorno pulsante,
-        // varredura horizontal e partículas orbitais (não é uma imagem parada).
+        // 2. Camada holográfica dinâmica: interferência luminosa e varredura volumétrica.
+        // A identidade/textura original permanece intacta sob a luz holográfica.
         val holoPulse = (0.5f + 0.5f * sin(t * 2.1f))
         val holoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -377,19 +374,18 @@ class HolographicFaceView @JvmOverloads constructor(
             color = Color.rgb(95, 238, 255)
             alpha = (22 + holoPulse * 34f).toInt()
         }
-        val faceOval = RectF(w * 0.17f, h * 0.19f, w * 0.83f, h * 0.91f)
-        canvas.drawOval(faceOval, holoPaint)
+        // Removido o oval-guia: não faz parte do holograma e parecia uma linha de seleção.
         holoPaint.strokeWidth = max(1f, w * 0.0011f)
-        holoPaint.alpha = (12 + holoPulse * 18f).toInt()
+        holoPaint.alpha = (35 + holoPulse * 32f).toInt()
         val scanY = (timeMs % 2600L).toFloat() / 2600f * h
         val scanPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = max(2f, h * 0.002f)
+            strokeWidth = max(3f, h * 0.0035f)
             color = Color.rgb(125, 245, 255)
-            alpha = 38
+            alpha = 78
         }
         canvas.drawLine(w * 0.12f, scanY, w * 0.88f, scanY, scanPaint)
-        val fineScan = Paint().apply { color = Color.argb(20, 110, 235, 255); strokeWidth = 1f }
+        val fineScan = Paint().apply { color = Color.argb(34, 110, 235, 255); strokeWidth = 1f }
         var scanLine = 0f
         while (scanLine < h) {
             canvas.drawLine(0f, scanLine, w, scanLine, fineScan)
@@ -397,28 +393,40 @@ class HolographicFaceView @JvmOverloads constructor(
         }
         // Pontos luminosos em órbita dão profundidade e movimento ao holograma.
         val particlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        for (p in 0 until 26) {
+        for (p in 0 until 54) {
             val phase = t * (0.22f + (p % 5) * 0.035f) + p * 0.61f
             val px = w * (0.5f + 0.39f * cos(phase + p * 0.13f))
             val py = h * (0.53f + 0.39f * sin(phase * 0.83f + p * 0.27f))
-            particlePaint.alpha = (55 + 115 * (0.5f + 0.5f * sin(phase * 2f))).toInt()
+            particlePaint.alpha = (75 + 145 * (0.5f + 0.5f * sin(phase * 2f))).toInt()
             val radius = if (p % 6 == 0) 2.8f else 1.3f
             canvas.drawCircle(px, py, radius, particlePaint)
         }
 
+        // Banho de luz ciano translúcida + pulsação de interferência: aparência de projeção,
+        // sem desenhar uma moldura oval sobre a face.
+        val holoWash = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((24 + holoPulse * 18f).toInt(), 40, 220, 255)
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+        }
+        canvas.drawRect(0f, 0f, w, h, holoWash)
+        holoWash.xfermode = null
+        val glitchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(48, 125, 245, 255) }
+        val glitchY = ((timeMs / 19L) % h.toLong()).toFloat()
+        canvas.drawRect(w * 0.08f, glitchY, w * 0.92f, glitchY + max(1.5f, h * 0.0018f), glitchPaint)
+
         // 3. Cascatas Binárias Vivas em Tela Cheia
-        rainPaint.textSize = w * 0.023f
+        rainPaint.textSize = w * 0.027f
         for (stream in rainStreams) {
             stream.yHead += stream.speed * (1f + if (isListening) micVoiceLevel * 1.5f else 0f)
             if (stream.yHead > 1.20f) stream.yHead = -0.15f
 
             val sx = stream.xNorm * w
-            val isCenterFace = stream.xNorm in 0.25f..0.75f
+            val isCenterFace = stream.xNorm in 0.34f..0.66f
 
             for (k in 0 until stream.len) {
                 val syNorm = stream.yHead - k * 0.022f
                 if (syNorm < 0f || syNorm > 1f) continue
-                if (isCenterFace && syNorm in 0.42f..0.75f) continue
+                if (isCenterFace && syNorm in 0.42f..0.70f && k % 3 != 0) continue
 
                 val sy = syNorm * h
                 val fade = (1f - k.toFloat() / stream.len).coerceIn(0f, 1f)
@@ -440,7 +448,7 @@ class HolographicFaceView @JvmOverloads constructor(
                         else -> Color.rgb(230, 238, 242)
                     }
                     rainPaint.color = col
-                    rainPaint.alpha = (fade * 140).toInt().coerceIn(20, 175)
+                    rainPaint.alpha = (fade * 175).toInt().coerceIn(28, 210)
                     canvas.drawText(bit, sx, sy, rainPaint)
                 }
             }
