@@ -401,11 +401,87 @@ object HoloReferenceTexture {
     }
 
     private fun createFallbackBitmap(): Bitmap {
+        // Keep a visible human avatar even if the embedded reference texture is invalid.
         val bmp = Bitmap.createBitmap(300, 550, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
-        val p = Paint()
-        p.shader = LinearGradient(0f, 0f, 300f, 0f, intArrayOf(Color.parseColor("#3B060C"), Color.BLACK, Color.parseColor("#2B474A")), null, Shader.TileMode.CLAMP)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.shader = LinearGradient(0f, 0f, 300f, 0f,
+            intArrayOf(Color.rgb(55, 5, 12), Color.BLACK, Color.rgb(24, 55, 59)),
+            null, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, 300f, 550f, p)
+        p.shader = null
+
+        // Shoulders, neck and hair silhouette.
+        p.shader = LinearGradient(90f, 390f, 210f, 550f,
+            intArrayOf(Color.rgb(100, 94, 94), Color.rgb(22, 25, 28)), null, Shader.TileMode.CLAMP)
+        c.drawOval(25f, 430f, 275f, 610f, p)
+        c.drawRoundRect(112f, 365f, 188f, 490f, 25f, 25f, p)
+        p.shader = null
+        p.color = Color.rgb(20, 19, 21)
+        c.drawOval(45f, 38f, 255f, 445f, p)
+
+        // Face volume with a soft three-dimensional grayscale skin gradient.
+        p.shader = LinearGradient(75f, 110f, 225f, 420f,
+            intArrayOf(Color.rgb(238, 225, 220), Color.rgb(173, 162, 162), Color.rgb(92, 91, 95)),
+            null, Shader.TileMode.CLAMP)
+        c.drawOval(61f, 92f, 239f, 428f, p)
+        p.shader = null
+        p.color = Color.rgb(28, 25, 27)
+        val hair = Path().apply {
+            moveTo(53f, 240f); cubicTo(45f, 100f, 82f, 35f, 150f, 35f)
+            cubicTo(225f, 35f, 257f, 112f, 247f, 240f)
+            cubicTo(224f, 178f, 204f, 150f, 181f, 143f)
+            cubicTo(145f, 164f, 101f, 151f, 73f, 205f); close()
+        }
+        c.drawPath(hair, p)
+
+        // Ears.
+        p.color = Color.rgb(142, 128, 128)
+        c.drawOval(47f, 235f, 78f, 306f, p)
+        c.drawOval(222f, 235f, 253f, 306f, p)
+
+        // Brows and expressive human eyes.
+        p.color = Color.rgb(63, 55, 57); p.strokeWidth = 7f
+        p.strokeCap = Paint.Cap.ROUND; p.style = Paint.Style.STROKE
+        c.drawLine(91f, 237f, 133f, 230f, p)
+        c.drawLine(167f, 230f, 209f, 237f, p)
+        p.style = Paint.Style.FILL
+        p.color = Color.rgb(246, 239, 235)
+        c.drawOval(87f, 244f, 140f, 265f, p)
+        c.drawOval(160f, 244f, 213f, 265f, p)
+        p.color = Color.rgb(45, 43, 45)
+        c.drawCircle(114f, 254f, 9f, p); c.drawCircle(186f, 254f, 9f, p)
+        p.color = Color.WHITE
+        c.drawCircle(117f, 250f, 3f, p); c.drawCircle(189f, 250f, 3f, p)
+
+        // Nose bridge, nostrils and lips.
+        p.color = Color.argb(75, 70, 59, 60); p.strokeWidth = 8f
+        p.style = Paint.Style.STROKE
+        c.drawLine(150f, 258f, 145f, 316f, p)
+        p.style = Paint.Style.FILL
+        p.color = Color.rgb(224, 207, 202)
+        c.drawOval(128f, 307f, 172f, 338f, p)
+        p.color = Color.rgb(105, 88, 89)
+        c.drawOval(132f, 324f, 145f, 331f, p)
+        c.drawOval(155f, 324f, 168f, 331f, p)
+        p.color = Color.rgb(112, 76, 79)
+        c.drawOval(119f, 357f, 181f, 378f, p)
+        p.color = Color.rgb(199, 158, 157)
+        c.drawLine(124f, 367f, 176f, 367f, p)
+
+        // Fine binary glyphs integrate the face with the Matrix-like holographic rain.
+        p.typeface = android.graphics.Typeface.MONOSPACE
+        p.textSize = 9f
+        p.color = Color.argb(76, 245, 250, 252)
+        for (y in 135..408 step 13) for (x in 73..227 step 11) {
+            if ((x * 7 + y * 3) % 5 < 2)
+                c.drawText(if ((x + y) % 2 == 0) "1" else "0", x.toFloat(), y.toFloat(), p)
+        }
+        p.typeface = android.graphics.Typeface.DEFAULT
+        p.color = Color.argb(75, 255, 255, 255)
+        p.style = Paint.Style.STROKE; p.strokeWidth = 1.2f
+        c.drawOval(61f, 92f, 239f, 428f, p)
+        p.style = Paint.Style.FILL
         return bmp
     }
 }
