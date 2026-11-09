@@ -74,11 +74,32 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private lateinit var tts: TextToSpeech
     private var availableVoices = mutableListOf<Voice>()
 
+    // Idiomas suportados para estudo e prática de conversação
+    data class LanguagePack(
+        val name: String,
+        val tag: String,
+        val locale: Locale,
+        val greeting: String
+    )
+
+    private val supportedLanguages = listOf(
+        LanguagePack("Português (Brasil)", "pt-BR", Locale("pt", "BR"), "Modo Português ativado! Sobre o que vamos conversar?"),
+        LanguagePack("Inglês (English - US)", "en-US", Locale.US, "English practice mode activated! How are you doing today?"),
+        LanguagePack("Espanhol (Español)", "es-ES", Locale("es", "ES"), "¡Modo de práctica de español activado! ¿De qué quieres hablar hoy?"),
+        LanguagePack("Francês (Français)", "fr-FR", Locale.FRANCE, "Mode de pratique du français activé ! Comment allez-vous aujourd'hui ?"),
+        LanguagePack("Alemão (Deutsch)", "de-DE", Locale.GERMANY, "Deutsch-Übungsmodus aktiviert! Wie geht es dir heute?"),
+        LanguagePack("Italiano (Italiano)", "it-IT", Locale.ITALY, "Modalità di pratica italiano attivata! Come stai oggi?"),
+        LanguagePack("Japonês (日本語)", "ja-JP", Locale.JAPAN, "日本語の練習モードが有効になりました！今日は何を話しましょうか？")
+    )
+
+    private var currentLangIndex: Int = 0
+
     private val PREFS_NAME = "HoloPrefs"
     private val KEY_GEMINI_API = "gemini_api_key"
     private val KEY_VOICE_PITCH = "voice_pitch"
     private val KEY_VOICE_SPEED = "voice_speed"
     private val KEY_VOICE_NAME = "voice_name"
+    private val KEY_ACTIVE_LANG = "active_lang_index"
     private val KEY_USER_MEMORIES = "user_memories_list"
     private val KEY_KNOWN_PEOPLE = "known_people_biometrics"
     private val KEY_CHAT_HISTORY = "recent_chat_history"
@@ -95,13 +116,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        currentLangIndex = prefs.getInt(KEY_ACTIVE_LANG, 0).coerceIn(0, supportedLanguages.size - 1)
+
         val rootLayout = FrameLayout(this)
         holoView = HolographicFaceView(this)
+        holoView.activeLanguageLabel = supportedLanguages[currentLangIndex].tag
         rootLayout.addView(holoView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
+        // Barra Superior: 🔄 CÂMERA | 👥 PESSOAS | 🌐 IDIOMAS | 🧠 MEMÓRIA | ⚙️ VOZ
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -112,20 +138,23 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 text = label
                 setTextColor(Color.parseColor("#E0F7FA"))
                 setBackgroundColor(Color.parseColor("#88102027"))
-                textSize = 11f
-                setPadding(18, 10, 18, 10)
+                textSize = 10f
+                setPadding(14, 10, 14, 10)
+                minWidth = 0
+                minimumWidth = 0
                 setOnClickListener { onClick() }
             }
         }
 
         val camSwitchBtn = makeTopButton("🔄 CÂMERA") { toggleCamera() }
         val peopleBtn = makeTopButton("👥 PESSOAS") { showKnownPeopleDialog() }
+        val langBtn = makeTopButton("🌐 IDIOMAS") { showLanguageCenterDialog() }
         val memoryBtn = makeTopButton("🧠 MEMÓRIA") { showMemoryDialog() }
-        val settingsBtn = makeTopButton("⚙️ VOZ & IA") { showVoiceAndAIDialog() }
+        val settingsBtn = makeTopButton("⚙️ VOZ") { showVoiceAndAIDialog() }
 
-        listOf(camSwitchBtn, peopleBtn, memoryBtn, settingsBtn).forEach { btn ->
+        listOf(camSwitchBtn, peopleBtn, langBtn, memoryBtn, settingsBtn).forEach { btn ->
             topBar.addView(btn)
-            topBar.addView(Space(this).apply { minimumWidth = 10 })
+            topBar.addView(Space(this).apply { minimumWidth = 8 })
         }
 
         val barParams = FrameLayout.LayoutParams(
@@ -159,6 +188,82 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         checkPermissions()
+    }
+
+    // Central de Download e Prática de Idiomas
+    private fun showLanguageCenterDialog() {
+        val items = supportedLanguages.mapIndexed { idx, lang ->
+            val available = try {
+                val res = tts.isLanguageAvailable(lang.locale)
+                res >= TextToSpeech.LANG_AVAILABLE
+            } catch (e: Exception) { false }
+            val status = if (available) "✅ Instalado" else "⬇️ Baixar pacote"
+            val activeMark = if (idx == currentLangIndex) " [ATIVO]" else ""
+            "${lang.name} ($status)$activeMark"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("🌐 Prática e Download de Idiomas")
+            .setItems(items) { _, which ->
+                switchLanguage(which)
+            }
+            .setPositiveButton("⬇️ Baixar Novos Idiomas Offline") { _, _ ->
+                downloadSystemLanguagePacks()
+            }
+            .setNeutralButton("⚙️ Config. TTS do Android") { _, _ ->
+                try {
+                    startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+            }
+            .setNegativeButton("Fechar", null)
+            .show()
+    }
+
+    private fun downloadSystemLanguagePacks() {
+        try {
+            val installIntent = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(installIntent)
+            Toast.makeText(this, "Abrindo gerenciador de pacotes de idiomas do Android...", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (ex: Exception) {
+                Toast.makeText(this, "Acesse Configurações > Sistema > Idiomas e entrada > Conversão de texto em voz", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun switchLanguage(index: Int) {
+        currentLangIndex = index.coerceIn(0, supportedLanguages.size - 1)
+        val lang = supportedLanguages[currentLangIndex]
+
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putInt(KEY_ACTIVE_LANG, currentLangIndex).apply()
+
+        holoView.activeLanguageLabel = lang.tag
+        val res = tts.setLanguage(lang.locale)
+
+        if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
+            Toast.makeText(this, "Pacote de voz ${lang.name} não encontrado no aparelho. Abrindo tela de download...", Toast.LENGTH_LONG).show()
+            downloadSystemLanguagePacks()
+        } else {
+            refreshVoicesForCurrentLanguage()
+            speak(lang.greeting)
+        }
+    }
+
+    private fun refreshVoicesForCurrentLanguage() {
+        try {
+            val langPrefix = supportedLanguages[currentLangIndex].locale.language.lowercase()
+            availableVoices.clear()
+            tts.voices?.filter {
+                it.locale.language.lowercase().startsWith(langPrefix) && !it.isNetworkConnectionRequired
+            }?.let { availableVoices.addAll(it) }
+        } catch (e: Exception) {}
     }
 
     private fun initHardwareSensors() {
@@ -221,17 +326,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     private fun toggleCamera(forceBack: Boolean? = null) {
         isUsingFrontCamera = if (forceBack != null) !forceBack else !isUsingFrontCamera
-        holoView.activeCameraName = if (isUsingFrontCamera) "FRONTAL" else "TRASEIRA (MUNDO)"
+        holoView.activeCameraName = if (isUsingFrontCamera) "FRONTAL" else "TRASEIRA"
         startCamera()
         val msg = if (isUsingFrontCamera) {
             "Câmera frontal ligada. Estou olhando para você."
         } else {
-            "Câmera traseira ligada. Aponte para objetos, animais ou pessoas e toque na tela para perguntar o que estou vendo!"
+            "Câmera traseira ligada. Aponte para objetos, animais ou pessoas e pergunte o que estou vendo!"
         }
         speak(msg)
     }
 
-    // Registra a pessoa com Biometria + Descrição Visual via IA!
     private fun registerPersonBiometrics(name: String, sig: FloatArray?) {
         val cleanName = name.trim().replaceFirstChar { it.uppercase() }
         if (cleanName.isEmpty()) return
@@ -271,13 +375,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         lastAnnouncedPerson = cleanName
         lastPersonGreetTime = SystemClock.uptimeMillis()
 
-        // Se tivermos foto atual da câmera, pede para a IA descrever e memorizar a aparência de quem foi apresentado!
         val frame = latestCameraFrameBase64
         if (!frame.isNullOrEmpty()) {
             networkExecutor.execute {
                 val desc = callPollinationsVisionPOST(
-                    "Descreva em 1 frase curta as características visuais (cabelo, barba, óculos, estilo) da pessoa na imagem para guardar na memória.",
-                    "Esta pessoa se chama $cleanName. Como ela se parece?",
+                    "Descreva em 1 frase curta as características visuais da pessoa na imagem para guardar na memória.",
+                    "Esta pessoa se chama $cleanName.",
                     frame
                 )
                 if (!desc.isNullOrBlank()) {
@@ -317,7 +420,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             }
         }
 
-        // Tolerância mais inteligente para reconhecer mesmo mudando a distância ou iluminação!
         return if (minDistance < 0.38f) bestName else "Rosto Novo"
     }
 
@@ -393,7 +495,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private fun showMemoryDialog() {
         val memories = getMemories()
         val input = EditText(this).apply {
-            hint = "Ex: Meu nome é Leonardo\nGosto de tecnologia"
+            hint = "Ex: Meu nome é Leonardo\nEstou aprendendo inglês"
             setText(memories.joinToString("\n"))
             minLines = 5
             gravity = Gravity.TOP or Gravity.START
@@ -462,11 +564,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         layout.addView(speedSeek)
 
         val voiceLabel = TextView(this).apply {
-            text = "Timbre de Voz (Português):"
+            text = "Timbre de Voz (${supportedLanguages[currentLangIndex].tag}):"
             setPadding(0, 24, 0, 8)
         }
         val voiceSpinner = Spinner(this)
-        val voiceNames = mutableListOf("Padrão do Sistema")
+        val voiceNames = mutableListOf("Padrão do Idioma")
         availableVoices.forEachIndexed { idx, v -> voiceNames.add("Voz ${idx + 1} (${v.name.takeLast(12)})") }
         voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceNames)
         val currentIdx = availableVoices.indexOfFirst { it.name == savedVoiceName }
@@ -495,7 +597,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 val vIdx = voiceSpinner.selectedItemPosition - 1
                 val vName = if (vIdx in availableVoices.indices) availableVoices[vIdx].name else ""
                 saveAndApplyVoice(pitch, speed, vName, apiInput.text.toString().trim())
-                speak("Voz configurada! Minha visão neural está pronta para reconhecer pessoas, animais e objetos.")
+                speak(supportedLanguages[currentLangIndex].greeting)
             }
             .setPositiveButton("Salvar") { _, _ ->
                 val pitch = 0.5f + (pitchSeek.progress / 100f)
@@ -520,6 +622,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     private fun applyVoiceSettings() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        tts.setLanguage(supportedLanguages[currentLangIndex].locale)
         tts.setPitch(prefs.getFloat(KEY_VOICE_PITCH, 1.0f))
         tts.setSpeechRate(prefs.getFloat(KEY_VOICE_SPEED, 1.05f))
         val voiceName = prefs.getString(KEY_VOICE_NAME, "") ?: ""
@@ -547,13 +650,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private fun initTTS() {
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts.language = Locale("pt", "BR")
-                try {
-                    availableVoices.clear()
-                    tts.voices?.filter {
-                        it.locale.language.lowercase().startsWith("pt") && !it.isNetworkConnectionRequired
-                    }?.let { availableVoices.addAll(it) }
-                } catch (e: Exception) { e.printStackTrace() }
+                tts.setLanguage(supportedLanguages[currentLangIndex].locale)
+                refreshVoicesForCurrentLanguage()
                 applyVoiceSettings()
                 greetUserWithMemory()
             }
@@ -576,10 +674,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         hasGreetedOnLaunch = true
 
         val memories = getMemories()
-        if (memories.isEmpty()) {
-            speak("Olá! Toque na minha face para conversar, apresentar uma pessoa ou perguntar o que estou vendo pela câmera!")
+        if (currentLangIndex != 0) {
+            speak(supportedLanguages[currentLangIndex].greeting)
+        } else if (memories.isEmpty()) {
+            speak("Olá! Estou em tela cheia e pronto para conversar, reconhecer pessoas e objetos ou praticar novos idiomas com você!")
         } else {
-            speak("Olá de novo! Lembro que ${memories.last()}. Sobre o que vamos conversar hoje?")
+            speak("Olá de novo! Lembro que ${memories.last()}. Quer conversar ou praticar algum idioma hoje?")
         }
     }
 
@@ -589,7 +689,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         speechRecognizer?.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 holoView.isListening = true
-                holoView.lastSpokenText = "OUVINDO... PODE FALAR"
+                holoView.lastSpokenText = "OUVINDO (${supportedLanguages[currentLangIndex].tag})..."
             }
             override fun onRmsChanged(rmsdB: Float) {
                 holoView.micVoiceLevel = (rmsdB / 10f).coerceIn(0f, 1.5f)
@@ -628,9 +728,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             holoView.isSpeaking = false
             if (speechRecognizer == null) initSpeechRecognizer()
 
+            val activeLangTag = supportedLanguages[currentLangIndex].tag
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, activeLangTag)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             }
@@ -657,13 +758,49 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
         appendChatHistory("Usuário", primary)
 
-        // 1. Apresentar Pessoas à Câmera ("Esse é o João", "Te apresentar a Maria", "Meu nome é...")
-        val introRegex = Regex("(?i).*?(esse e o|essa e a|este e o|esta e a|apresentar o|apresentar a|conheca o|conheca a|nome dele e|nome dela e|eu sou o|eu sou a|meu nome e|me chamo)\\s+([a-zA-ZÀ-ÿ]+.*)")
+        // 0. Comandos por voz para trocar de idioma e praticar!
+        when {
+            norm.contains("praticar ingles") || norm.contains("falar em ingles") || norm.contains("speak english") -> {
+                switchLanguage(1)
+                return
+            }
+            norm.contains("praticar espanhol") || norm.contains("falar em espanhol") || norm.contains("hablar espanol") -> {
+                switchLanguage(2)
+                return
+            }
+            norm.contains("praticar frances") || norm.contains("falar em frances") -> {
+                switchLanguage(3)
+                return
+            }
+            norm.contains("praticar alemao") || norm.contains("falar em alemao") -> {
+                switchLanguage(4)
+                return
+            }
+            norm.contains("praticar italiano") || norm.contains("falar em italiano") -> {
+                switchLanguage(5)
+                return
+            }
+            norm.contains("praticar japones") || norm.contains("falar em japones") -> {
+                switchLanguage(6)
+                return
+            }
+            norm.contains("voltar para portugues") || norm.contains("falar em portugues") || norm.contains("portugues") && norm.contains("mudar") -> {
+                switchLanguage(0)
+                return
+            }
+            norm.contains("baixar idioma") || norm.contains("instalar idioma") -> {
+                downloadSystemLanguagePacks()
+                return
+            }
+        }
+
+        // 1. Apresentar Pessoas à Câmera
+        val introRegex = Regex("(?i).*?(esse e o|essa e a|este e o|esta e a|apresentar o|apresentar a|conheca o|conheca a|nome dele e|nome dela e|eu sou o|eu sou a|meu nome e|me chamo|my name is|this is)\\s+([a-zA-ZÀ-ÿ]+.*)")
         val introMatch = introRegex.find(norm)
         if (introMatch != null) {
             val personName = introMatch.groupValues[2].split(" ")[0].trim()
             registerPersonBiometrics(personName, currentFaceSignature)
-            speak("Muito prazer, $personName! Já registrei a geometria do seu rosto e a sua imagem na minha memória. O que você gosta de fazer?")
+            speak("Muito prazer, $personName! Já registrei seu rosto na minha memória.")
             return
         }
 
@@ -678,7 +815,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         // 3. Abrir Aplicativos
-        val openTriggers = listOf("abrir ", "abre ", "abra ", "iniciar ", "inicia ", "executar ")
+        val openTriggers = listOf("abrir ", "abre ", "abra ", "iniciar ", "inicia ", "executar ", "open ")
         if (openTriggers.any { norm.contains(it) }) {
             for (candidate in matches) {
                 val appTarget = extractAppName(candidate)
@@ -690,28 +827,29 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         // 4. Lanterna
-        if (norm.contains("lanterna") || norm.contains("flash")) {
-            val turnOn = !(norm.contains("desliga") || norm.contains("apaga"))
+        if (norm.contains("lanterna") || norm.contains("flash") || norm.contains("flashlight")) {
+            val turnOn = !(norm.contains("desliga") || norm.contains("apaga") || norm.contains("off"))
             setFlashlight(turnOn)
             speak(if (turnOn) "Lanterna ligada." else "Lanterna desligada.")
             return
         }
 
-        // 5. Envia para o Cérebro LLM Multimodal (Envia a foto da câmera quando você pergunta sobre o que ele vê, animais, objetos ou pessoas!)
+        // 5. Envia para o Cérebro LLM Multimodal (Com suporte a prática de idiomas!)
         val wantsVision = norm.contains("vendo") || norm.contains("olha") || norm.contains("olhe") ||
                 norm.contains("mostra") || norm.contains("frente") || norm.contains("que e isso") ||
                 norm.contains("quem e") || norm.contains("quem esta") || norm.contains("animal") ||
                 norm.contains("objeto") || norm.contains("cachorro") || norm.contains("gato") ||
-                norm.contains("segurando") || norm.contains("parece") || !isUsingFrontCamera
+                norm.contains("segurando") || norm.contains("parece") || norm.contains("see") ||
+                norm.contains("look") || !isUsingFrontCamera
         askAdvancedLLM(primary, includeCameraImage = wantsVision)
     }
 
     private fun extractAppName(phrase: String): String {
         var s = normalizeText(phrase)
-        s = Regex("^.*?(abrir|abre|abra|iniciar|inicia|executar)\\s+").replace(s, "")
-        s = Regex("^(o|a|os|as|um|uma|meu|minha|aplicativo|app|programa|do|da|de)\\s+").replace(s, "")
+        s = Regex("^.*?(abrir|abre|abra|iniciar|inicia|executar|open)\\s+").replace(s, "")
+        s = Regex("^(o|a|os|as|um|uma|meu|minha|aplicativo|app|programa|do|da|de|the)\\s+").replace(s, "")
         s = Regex("^(o|a|do|da)\\s+").replace(s, "")
-        s = Regex("\\s+(por favor|pra mim|para mim|agora)$").replace(s, "")
+        s = Regex("\\s+(por favor|pra mim|para mim|agora|please)$").replace(s, "")
         return s.trim()
     }
 
@@ -720,7 +858,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         if (query.isEmpty()) return false
 
         when {
-            query.contains("configurac") || query.contains("ajustes") -> {
+            query.contains("configurac") || query.contains("ajustes") || query.contains("settings") -> {
                 startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 speak("Abrindo configurações.")
                 return true
@@ -790,60 +928,57 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         return false
     }
 
-    // Cérebro Multi-Motor (Nunca cai em frase genérica!)
     private fun askAdvancedLLM(userPrompt: String, includeCameraImage: Boolean) {
         holoView.emotion = 2
-        holoView.lastSpokenText = if (includeCameraImage) "ANALISANDO IMAGEM DA CÂMERA..." else "PENSANDO NA RESPOSTA..."
+        holoView.lastSpokenText = if (includeCameraImage) "ANALISANDO IMAGEM..." else "PENSANDO..."
 
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val geminiKey = prefs.getString(KEY_GEMINI_API, "")?.trim() ?: ""
         val memoriesList = getMemories()
         val recentChat = prefs.getString(KEY_CHAT_HISTORY, "") ?: ""
-        val (batPct, isChg) = getBatteryStatus()
         val frameB64 = latestCameraFrameBase64
+        val activeLang = supportedLanguages[currentLangIndex]
+
+        val langInstruction = if (currentLangIndex == 0) {
+            "Responda em Português do Brasil de forma natural, inteligente e direta (máximo 2 frases)."
+        } else {
+            "O usuário está praticando o idioma ${activeLang.name} (${activeLang.tag}). Responda no idioma ${activeLang.name} de forma natural e clara (máximo 2 frases), ajudando o usuário a praticar conversação e fazendo uma pergunta simples no mesmo idioma para continuar o treino!"
+        }
 
         val systemContext = """
-            Você é o Holo, uma inteligência artificial avançada, empática e muito inteligente rodando no Android.
-            CONTEXTO SENSORIAL ATUAL:
-            - Câmera ativa: ${holoView.activeCameraName}
-            - Pessoa identificada na câmera: ${holoView.recognizedPersonName}
-            - Expressão facial da pessoa: ${holoView.currentExpressionLabel}
-            - Sensores físicos: ${holoView.sensorStatusLabel}, Bateria: $batPct%
-            - Memórias salvas sobre o usuário e pessoas: ${memoriesList.joinToString("; ")}
-            - Conversa recente:
+            Você é o Holo, um assistente holográfico inteligente e parceiro de conversação no Android.
+            $langInstruction
+            Memórias sobre o usuário: ${memoriesList.joinToString("; ")}.
+            Conversa recente:
             $recentChat
-
-            DIRETRIZES OBRIGATÓRIAS:
-            1. Responda DIRETAMENTE à pergunta do usuário com conhecimento profundo, clareza e inteligência em português do Brasil (2 a 3 frases).
-            2. Se houver uma foto anexada, identifique com precisão objetos, animais, pessoas, cores ou o ambiente mostrado.
-            3. Ao final, faça uma pergunta inteligente relacionada ao assunto.
-            4. Se aprender um fato novo sobre o usuário, adicione no fim: [MEMORIA: fato].
+            IMPORTANTE: Nunca repita metadados técnicos como '(Pessoa na câmera:...)' na resposta falada. Fale diretamente como um amigo humano inteligente.
         """.trimIndent()
 
         networkExecutor.execute {
             var reply: String? = null
 
-            // Motor 1: Gemini Vision (se tiver chave)
             if (geminiKey.isNotEmpty()) {
                 reply = callGeminiPOST(systemContext, userPrompt, if (includeCameraImage) frameB64 else null, geminiKey)
             }
 
-            // Motor 2: Pollinations OpenAI Multimodal (com imagem se solicitada)
             if (reply.isNullOrBlank() && includeCameraImage && !frameB64.isNullOrEmpty()) {
-                reply = callPollinationsVisionPOST(systemContext, userPrompt, frameB64)
+                val visionPrompt = if (currentLangIndex == 0) {
+                    "Olhe para a imagem da câmera e responda diretamente em português (2 frases): $userPrompt"
+                } else {
+                    "Look at the camera image and answer directly in ${activeLang.name} (2 sentences): $userPrompt"
+                }
+                reply = callPollinationsVisionPOST(systemContext, visionPrompt, frameB64)
             }
 
-            // Motor 3: Pollinations OpenAI Texto Rápido (alta velocidade e confiabilidade)
             if (reply.isNullOrBlank()) {
                 reply = callPollinationsVisionPOST(systemContext, userPrompt, null)
             }
 
-            // Motor 4: Pollinations GET Direto (Fallback infalível)
             if (reply.isNullOrBlank()) {
-                reply = callDirectGETFallback(userPrompt, memoriesList)
+                reply = callDirectGETFallback(userPrompt, activeLang.name)
             }
 
-            val finalReply = reply ?: "Entendi sua pergunta sobre $userPrompt. Pode repetir mais uma vez para eu processar melhor?"
+            val finalReply = reply ?: "Entendi! Pode me dizer novamente para continuarmos?"
 
             runOnUiThread {
                 handleAIResponse(finalReply)
@@ -859,7 +994,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             conn.connectTimeout = 20000
             conn.readTimeout = 20000
             conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("User-Agent", "HoloAssistant/5.0")
+            conn.setRequestProperty("User-Agent", "HoloAssistant/6.0")
             conn.doOutput = true
 
             val userContent: Any = if (!imageBase64.isNullOrEmpty()) {
@@ -903,10 +1038,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
-    private fun callDirectGETFallback(userPrompt: String, memories: List<String>): String? {
+    private fun callDirectGETFallback(userPrompt: String, langName: String): String? {
         return try {
-            val memStr = if (memories.isNotEmpty()) "Memória: ${memories.takeLast(4).joinToString(", ")}." else ""
-            val q = "Responda em português de forma inteligente e direta em 2 frases ($memStr Pessoa na câmera: ${holoView.recognizedPersonName}): $userPrompt"
+            val q = "Responda no idioma $langName em 2 frases diretas e naturais: $userPrompt"
             val encoded = URLEncoder.encode(q, "UTF-8")
             val url = URL("https://text.pollinations.ai/$encoded?model=openai")
             val conn = url.openConnection() as HttpURLConnection
@@ -1087,7 +1221,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                             browRightVal = ((dist - 0.11f) * 8.5f).coerceIn(-0.6f, 0.9f)
                         }
 
-                        // ASSINATURA BIOMÉTRICA GARANTIDA EM 100% DOS FRAMES (Usa Landmarks + BoundingBox)
                         val lEyePos = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
                         val rEyePos = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
                         val nosePos = face.getLandmark(FaceLandmark.NOSE_BASE)?.position
@@ -1114,7 +1247,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                             lastAnnouncedPerson = personName
                             lastPersonGreetTime = now
                             runOnUiThread {
-                                speak("Olá $personName! Reconheci você pela câmera!")
+                                speak("Olá $personName!")
                             }
                         }
 
