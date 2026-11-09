@@ -381,11 +381,8 @@ class HolographicFaceView @JvmOverloads constructor(
             }
         }
 
-        // 1. A textura original permanece como referência anatômica, mas translúcida.
-        // A leitura visual principal passa a ser formada pelos próprios dígitos.
-        meshPaint.alpha = 82
-        canvas.drawBitmapMesh(refBitmap, meshW, meshH, meshVerts, 0, meshColors, 0, meshPaint)
-        meshPaint.alpha = 255
+        // A fotografia NÃO é desenhada. A face é reconstruída como superfície 3D
+        // de pontos e polígonos luminosos, com dígitos como matéria visual.
         drawBinaryFace(canvas, w, h, t)
 
         // 2. Camada holográfica dinâmica: interferência luminosa e varredura volumétrica.
@@ -482,27 +479,123 @@ class HolographicFaceView @JvmOverloads constructor(
     }
 
     /**
-     * Reconstrói visualmente a referência com 0/1. A densidade vem dos pixels
-     * reais da face aprovada; a animação de olhos, boca e sobrancelhas continua
-     * sendo aplicada pela malha antes desta camada.
+     * Superfície facial 3D procedural. A imagem de referência é usada apenas
+     * para amostrar a distribuição tonal; nunca é pintada no Canvas.
+     * A forma é uma máscara facial elíptica com relevo anatómico aproximado.
      */
     private fun drawBinaryFace(canvas: Canvas, w: Float, h: Float, time: Float) {
-        val cellW = w / binaryCols
-        val cellH = h / binaryRows
-        binaryPaint.textSize = min(cellW * 0.88f, cellH * 0.82f)
-        for (gy in 0 until binaryRows) {
-            val y = (gy + 0.72f) * cellH
-            for (gx in 0 until binaryCols) {
-                val density = binaryDensity[gy * binaryCols + gx]
-                if (density < 0.16f) continue
-                val shimmer = 0.72f + 0.28f * sin(time * 2.2f + gx * 0.71f + gy * 0.39f)
-                val alpha = ((38f + density * 205f) * shimmer).toInt().coerceIn(24, 235)
-                binaryPaint.color = if ((gx + gy) % 7 == 0) Color.rgb(190, 255, 255) else Color.rgb(70, 225, 255)
-                binaryPaint.alpha = alpha
-                val bit = if (((gx * 13 + gy * 7 + (time * 3f).toInt()) and 1) == 0) "0" else "1"
-                canvas.drawText(bit, (gx + 0.5f) * cellW, y, binaryPaint)
-            }
+        val cols = 58
+        val rows = 76
+        val x0 = 0.16f * w
+        val xSpan = 0.68f * w
+        val y0 = 0.105f * h
+        val ySpan = 0.79f * h
+        val points = Array(rows + 1) { arrayOfNulls<PointF>(cols + 1) }
+        val depths = Array(rows + 1) { FloatArray(cols + 1) }
+        val cx = 0.5f
+        val cy = 0.50f
+
+        fun g(x: Float, y: Float, ax: Float, ay: Float, sx: Float, sy: Float): Float {
+            val dx = (x - ax) / sx
+            val dy = (y - ay) / sy
+            return exp(-(dx * dx + dy * dy) * 0.5f)
         }
+
+        // Build a curved surface with cheekbones, eye sockets, nose bridge,
+        // brow ridge, philtrum and chin. Coordinates are local to the face.
+        for (iy in 0..rows) for (ix in 0..cols) {
+            val u = ix.toFloat() / cols
+            val v = iy.toFloat() / rows
+            val nx = (u - cx) / 0.49f
+            val ny = (v - cy) / 0.51f
+            val edge = nx * nx + ny * ny
+            if (edge > 1.04f) continue
+
+            var z = sqrt((1f - edge.coerceIn(0f, 0.98f)).coerceAtLeast(0.02f)) * 0.19f
+            z += 0.12f * g(u,v,0.50f,0.57f,0.075f,0.22f) // nose bridge
+            z += 0.065f * g(u,v,0.50f,0.72f,0.10f,0.07f) // nose tip
+            z += 0.045f * g(u,v,0.31f,0.62f,0.13f,0.12f)
+            z += 0.045f * g(u,v,0.69f,0.62f,0.13f,0.12f) // cheekbones
+            z += 0.035f * g(u,v,0.50f,0.86f,0.18f,0.10f) // chin
+            z -= 0.045f * g(u,v,0.35f,0.43f,0.13f,0.055f)
+            z -= 0.045f * g(u,v,0.65f,0.43f,0.13f,0.055f) // eye sockets
+            z -= 0.018f * g(u,v,0.50f,0.79f,0.12f,0.025f) // mouth cavity
+
+            val yaw = headYaw + sin(time * 0.31f) * 0.025f
+            val pitch = headPitch + cos(time * 0.27f) * 0.015f
+            val xx = (u - 0.5f) * 2f
+            val yy = (v - 0.5f) * 2f
+            val rx = xx * cos(yaw) + z * sin(yaw)
+            val rz = -xx * sin(yaw) + z * cos(yaw)
+            val ry = yy * cos(pitch) - rz * sin(pitch)
+            val perspective = 1.0f / (1.0f - rz * 0.22f).coerceAtLeast(0.72f)
+            val screenX = w * 0.5f + rx * xSpan * 0.5f * perspective
+            val screenY = y0 + ySpan * (0.5f + ry * 0.5f) * perspective
+            points[iy][ix] = PointF(screenX, screenY)
+            depths[iy][ix] = z
+        }
+
+        val wire = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = max(0.65f, w * 0.0011f)
+        }
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        val binary = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create("monospace", Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+            textSize = max(5f, w * 0.013f)
+        }
+
+        // Polygon mesh: two triangular facets per grid cell, with depth shading.
+        for (iy in 0 until rows) for (ix in 0 until cols) {
+            val p00 = points[iy][ix] ?: continue
+            val p10 = points[iy][ix + 1] ?: continue
+            val p01 = points[iy + 1][ix] ?: continue
+            val p11 = points[iy + 1][ix + 1] ?: continue
+            val z = (depths[iy][ix] + depths[iy][ix + 1] +
+                depths[iy + 1][ix] + depths[iy + 1][ix + 1]) * 0.25f
+            val glow = (28f + z * 170f + 18f * sin(time * 2.1f + ix * 0.12f + iy * 0.08f)).toInt().coerceIn(18, 95)
+            wire.color = Color.argb(glow, 75, 225, 255)
+            val pathA = Path().apply { moveTo(p00.x,p00.y); lineTo(p10.x,p10.y); lineTo(p11.x,p11.y); close() }
+            val pathB = Path().apply { moveTo(p00.x,p00.y); lineTo(p01.x,p01.y); lineTo(p11.x,p11.y); close() }
+            fill.color = Color.argb((glow * 0.22f).toInt(), 20, 150, 205)
+            canvas.drawPath(pathA, fill); canvas.drawPath(pathB, fill)
+            canvas.drawPath(pathA, wire); canvas.drawPath(pathB, wire)
+        }
+
+        // Binary particles sit ON the projected 3D surface, not in front of it.
+        for (iy in 0..rows step 2) for (ix in 0..cols step 2) {
+            val p = points[iy][ix] ?: continue
+            val u = ix.toFloat() / cols
+            val v = iy.toFloat() / rows
+            val sourceX = (u * (refBitmap.width - 1)).toInt().coerceIn(0, refBitmap.width - 1)
+            val sourceY = (v * (refBitmap.height - 1)).toInt().coerceIn(0, refBitmap.height - 1)
+            val pixel = refBitmap.getPixel(sourceX, sourceY)
+            val lum = (Color.red(pixel) * 0.2126f + Color.green(pixel) * 0.7152f + Color.blue(pixel) * 0.0722f) / 255f
+            val pulse = 0.68f + 0.32f * sin(time * 2.7f + ix * 0.37f + iy * 0.19f)
+            val featureBoost = 0.35f + 0.65f * (g(u,v,0.5f,0.56f,0.10f,0.28f) +
+                g(u,v,0.35f,0.43f,0.15f,0.07f) + g(u,v,0.65f,0.43f,0.15f,0.07f) +
+                g(u,v,0.5f,0.79f,0.15f,0.05f)).coerceAtMost(1f)
+            val alpha = ((65f + lum * 110f) * pulse * featureBoost).toInt().coerceIn(30, 210)
+            binary.color = if ((ix + iy) % 9 == 0) Color.rgb(205,255,255) else Color.rgb(80,225,255)
+            binary.alpha = alpha
+            val bit = if (((ix * 17 + iy * 11 + (time * 5f).toInt()) and 1) == 0) "0" else "1"
+            canvas.drawText(bit, p.x, p.y, binary)
+        }
+
+        // Bright feature contours make eyes, nose, lips and jaw readable in 3D.
+        val contour = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb((115 + 35 * sin(time * 2f)).toInt().coerceIn(70,150), 130,245,255)
+            style = Paint.Style.STROKE
+            strokeWidth = max(1.1f, w * 0.002f)
+        }
+        fun arc(cx: Float, cy: Float, rx: Float, ry: Float, start: Float, sweep: Float) {
+            canvas.drawArc(RectF(w*(0.16f+0.68f*cx-rx), y0+ySpan*cy-ry,
+                w*(0.16f+0.68f*cx+rx), y0+ySpan*cy+ry), start, sweep, false, contour)
+        }
+        arc(0.35f,0.43f,w*0.075f,h*0.018f,190f,160f)
+        arc(0.65f,0.43f,w*0.075f,h*0.018f,190f,160f)
+        arc(0.50f,0.79f,w*0.095f,h*0.012f,5f,170f)
     }
 
     private fun drawCleanBottomHUD(canvas: Canvas, w: Float, h: Float) {
