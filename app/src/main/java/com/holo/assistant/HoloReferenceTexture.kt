@@ -2,12 +2,17 @@ package com.holo.assistant
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
 import android.util.Base64
 
 object HoloReferenceTexture {
     private val b64Chunks = arrayOf(
-        "UklGRux+AABXRUJQVlA4IOB+AADwgQGdASosASYCPqVEnEmmI6KhLZT9EMAUiWlfzXvXfa4YZ23a53QPLEIwwXdctr2vPgWY3nv8R/x/BH9H+4/83qb",
-        "f/nOGf2X+28x/ud/z9gn/R3w/vv+z///+v7BH7h/vv///2PX8efdyqAvu15b/2PmV+r/6H2Af6J/d/P//m+FP9o/6P7nfAR/Sv9J+33vH/+f71+lr+D/",
+        "UklGRux+AABXRUJQVlA4IOB+AADwgQGdASosASYCPqVEnEmmI6KhLZT9EMAUiWlfzXvXfa4YZ23a53QPLEIwwXdctr2vPgWY3nv8R/x/BH9H+4/83qbf",
+        "/nOGf2X+28x/ud/z9gn/R3w/vv+z///+v7BH7h/vv///2PX8efdyqAvu15b/2PmV+r/6H2Af6J/d/P//m+FP9o/6P7nfAR/Sv9J+33vH/+f71+lr+D/",
         "9n71/Ar/eP+r+6/bLGuxHHQs0UPvJpllGLpGm5tTDkH6RrBoGuF+X/6G0m+V8PyrOr8l+eIvFibr+/YHXWEvdlNx82MLlkP0L/4OUBy2fScki9kXqT/",
         "7/8zx/+ocbtEIMp2WSV3zXtKd0LJydYu8un0ZrjLeZexTji8j5mYzV80j+6Z0nBb4+9EEytwR8RAzeLNJCmFuaIJn1Qc5hoUTZ8TWiF48n2z1H+PPqG",
         "qvy4Ejce1mel0uKndhS36SWWlUWWAUpWMJ/TdRsPp/GEBPP/ORX722EfaGzw+bOYYWu/M/YiSIH/F7Owl6JUTJGA+SwrxrH7Yp9uSWKoYjk8NRJH2tH",
@@ -386,8 +391,21 @@ object HoloReferenceTexture {
     )
 
     fun loadBitmap(): Bitmap {
-        val fullB64 = b64Chunks.joinToString("")
-        val bytes = Base64.decode(fullB64, Base64.DEFAULT)
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        return try {
+            val fullB64 = b64Chunks.joinToString("")
+            val bytes = Base64.decode(fullB64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: createFallbackBitmap()
+        } catch (e: Exception) {
+            createFallbackBitmap()
+        }
+    }
+
+    private fun createFallbackBitmap(): Bitmap {
+        val bmp = Bitmap.createBitmap(300, 550, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val p = Paint()
+        p.shader = LinearGradient(0f, 0f, 300f, 0f, intArrayOf(Color.parseColor("#3B060C"), Color.BLACK, Color.parseColor("#2B474A")), null, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, 300f, 550f, p)
+        return bmp
     }
 }
