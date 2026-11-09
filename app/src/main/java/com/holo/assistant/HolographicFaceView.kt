@@ -64,6 +64,22 @@ class HolographicFaceView @JvmOverloads constructor(
         val isBrightDrip: Boolean
     )
 
+    private val detectedContours = HashMap<String, List<PointF>>()
+    private val contourLock = Any()
+
+    fun updateFaceContours(contours: Map<String, List<PointF>>) {
+        synchronized(contourLock) {
+            detectedContours.clear()
+            detectedContours.putAll(contours.mapValues { it.value.map { p -> PointF(p.x, p.y) } })
+        }
+        postInvalidateOnAnimation()
+    }
+
+    fun clearFaceContours() {
+        synchronized(contourLock) { detectedContours.clear() }
+        postInvalidateOnAnimation()
+    }
+
     private val rainStreams = ArrayList<LiveRainStream>(220)
     private val random = Random(77)
 
@@ -581,6 +597,65 @@ class HolographicFaceView @JvmOverloads constructor(
             binary.alpha = alpha
             val bit = if (((ix * 17 + iy * 11 + (time * 5f).toInt()) and 1) == 0) "0" else "1"
             canvas.drawText(bit, p.x, p.y, binary)
+        }
+
+        // Real facial geometry from ML Kit: normalized landmarks are drawn over
+        // the volumetric surface, so eyes/lips/nose follow the detected face instead
+        // of arbitrary hard-coded screen coordinates.
+        val live = synchronized(contourLock) { detectedContours.mapValues { it.value.toList() } }
+        val featureGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(235, 115, 250, 255)
+            style = Paint.Style.STROKE
+            strokeWidth = max(2.0f, w * 0.0032f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            setShadowLayer(8f, 0f, 0f, Color.CYAN)
+        }
+        val featureSoft = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(150, 55, 210, 245)
+            style = Paint.Style.STROKE
+            strokeWidth = max(1.1f, w * 0.0016f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        fun contourPath(key: String): Path? {
+            val pts = live[key] ?: return null
+            if (pts.size < 2) return null
+            return Path().apply {
+                moveTo(x0 + pts[0].x * xSpan, y0 + pts[0].y * ySpan)
+                for (i in 1 until pts.size) lineTo(x0 + pts[i].x * xSpan, y0 + pts[i].y * ySpan)
+                if (key == "face" || key.contains("eye") || key.contains("lip")) close()
+            }
+        }
+        // Face silhouette is now based on the camera's actual jaw/forehead contour.
+        contourPath("face")?.let {
+            val silhouetteFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(18, 40, 220, 255) }
+            canvas.drawPath(it, silhouetteFill)
+            canvas.drawPath(it, featureSoft)
+        }
+        listOf("leftEye", "rightEye").forEach { key ->
+            contourPath(key)?.let { path ->
+                val eyeFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(115, 2, 22, 34) }
+                canvas.drawPath(path, eyeFill)
+                canvas.drawPath(path, featureGlow)
+            }
+        }
+        listOf("upperLipTop", "upperLipBottom", "lowerLipTop", "lowerLipBottom",
+            "noseBridge", "noseBottom", "leftBrow", "rightBrow").forEach { key ->
+            contourPath(key)?.let { canvas.drawPath(it, if (key.contains("Lip")) featureGlow else featureSoft) }
+        }
+        // Explicit mouth aperture between upper and lower lip contours.
+        val upper = live["upperLipBottom"]
+        val lower = live["lowerLipTop"]
+        if (!upper.isNullOrEmpty() && !lower.isNullOrEmpty()) {
+            val aperture = Path().apply {
+                moveTo(x0 + upper.first().x*xSpan, y0 + upper.first().y*ySpan)
+                upper.forEach { lineTo(x0 + it.x*xSpan, y0 + it.y*ySpan) }
+                lower.asReversed().forEach { lineTo(x0 + it.x*xSpan, y0 + it.y*ySpan) }
+                close()
+            }
+            canvas.drawPath(aperture, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(145, 0, 18, 28) })
+            canvas.drawPath(aperture, featureGlow)
         }
 
         // Bright feature contours make eyes, nose, lips and jaw readable in 3D.
